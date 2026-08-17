@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Env
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
+.next/
+
+# Docker volumes
+postgres_data/
+
+# Frontend build output
+frontend-new/dist/
+
+# Uploaded CV files (local storage)
+backend/uploads/
+
+# AWS CDK
+infrastructure/cdk.out/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
