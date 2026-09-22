@@ -1,11 +1,13 @@
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.core.ai_stub import generate_response
+from app.core.ai.chat import generate_response
 from app.core.limiter import limiter
 from app.db.base import AsyncSessionLocal, get_db
 from app.models.chat import ChatMessage, MessageRoleEnum
@@ -14,6 +16,16 @@ from app.models.position import Position, PositionStatusEnum
 from app.schemas.chat import ChatStartIn, ChatStartOut, ChatStreamIn
 
 router = APIRouter(tags=["chat"])
+
+
+def _sse(payload: dict) -> str:
+    """Zabaľ dáta do jedného SSE rámca.
+
+    Obsah posielame ako JSON, nie ako holý text. Odpoveď modelu totiž bežne
+    obsahuje nové riadky a tie by holý formát `data: <text>` rozsekali na
+    viac rámcov a odpoveď by sa v prehliadači rozpadla.
+    """
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 async def _get_active_company(slug: str, db: AsyncSession) -> Company:
@@ -75,14 +87,18 @@ async def chat_stream(request: Request, slug: str, body: ChatStreamIn):
             messages = result.scalars().all()
 
             if not messages:
-                yield "data: Relácia nenájdená.\n\n"
-                yield "data: [DONE]\n\n"
+                yield _sse({"t": "Relácia nenájdená."})
+                yield _sse({"done": True})
                 return
 
             position_id = messages[0].position_id
             company_id = messages[0].company_id
 
-            pos_result = await db.execute(select(Position).where(Position.id == position_id))
+            pos_result = await db.execute(
+                select(Position)
+                .where(Position.id == position_id)
+                .options(selectinload(Position.requirements))
+            )
             position = pos_result.scalar_one_or_none()
 
             db.add(ChatMessage(
@@ -105,19 +121,28 @@ async def chat_stream(request: Request, slug: str, body: ChatStreamIn):
                     applicant_name = greeting[start:end]
 
             full_response = ""
-            async for chunk in generate_response(position, history, body.message, applicant_name):
+            async for chunk in generate_response(
+                position,
+                history,
+                body.message,
+                applicant_name,
+                requirements=position.requirements if position else None,
+            ):
                 full_response += chunk
-                yield f"data: {chunk}\n\n"
+                yield _sse({"t": chunk})
 
-            yield "data: [DONE]\n\n"
+            yield _sse({"done": True})
 
-            db.add(ChatMessage(
-                company_id=company_id,
-                applicant_session_id=body.session_id,
-                position_id=position_id,
-                role=MessageRoleEnum.assistant,
-                content=full_response.strip(),
-            ))
-            await db.commit()
+            # Odpoveď ukladáme až po dostreamovaní, aby sa do histórie
+            # dostalo presne to, čo uchádzač videl.
+            if full_response.strip():
+                db.add(ChatMessage(
+                    company_id=company_id,
+                    applicant_session_id=body.session_id,
+                    position_id=position_id,
+                    role=MessageRoleEnum.assistant,
+                    content=full_response.strip(),
+                ))
+                await db.commit()
 
     return StreamingResponse(generate(), media_type="text/event-stream")

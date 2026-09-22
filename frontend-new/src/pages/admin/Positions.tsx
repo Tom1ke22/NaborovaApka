@@ -5,7 +5,7 @@ import { type Position, CONTRACT_TYPE_LABELS, SALARY_PERIOD_LABELS } from '@/typ
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
-import { Plus, Pencil, Archive, LogOut, Users } from 'lucide-react'
+import { Plus, Pencil, Archive, ArchiveRestore, LogOut, Users } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import PositionForm from './PositionForm'
 
@@ -31,6 +31,13 @@ export default function AdminPositions() {
     load()
   }
 
+  async function restore(id: string) {
+    // Pozícia sa vráti medzi verejné, preto sa pýtame.
+    if (!confirm('Vrátiť pozíciu medzi aktívne? Znova sa zobrazí uchádzačom.')) return
+    await api.put(`/admin/positions/${id}`, { status: 'active' })
+    load()
+  }
+
   function openCreate() { setEditingPosition(null); setShowForm(true) }
   function openEdit(pos: Position) { setEditingPosition(pos); setShowForm(true) }
 
@@ -47,9 +54,6 @@ export default function AdminPositions() {
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-gray-900">Správa pozícií</h1>
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/admin/applicants')}>
-            <Users className="w-4 h-4 mr-1.5" /> Záujemcovia
-          </Button>
           <Button size="sm" onClick={openCreate}>
             <Plus className="w-4 h-4 mr-1.5" /> Nová pozícia
           </Button>
@@ -89,12 +93,23 @@ export default function AdminPositions() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate(`/admin/applicants?position=${pos.id}`)}
+                      >
+                        <Users className="w-3.5 h-3.5 mr-1" /> Záujemcovia ({pos.applicant_count ?? 0})
+                      </Button>
                       <Button variant="outline" size="sm" onClick={() => openEdit(pos)}>
                         <Pencil className="w-3.5 h-3.5 mr-1" /> Upraviť
                       </Button>
-                      {pos.status === 'active' && (
+                      {pos.status === 'active' ? (
                         <Button variant="ghost" size="sm" onClick={() => archive(pos.id)}>
                           <Archive className="w-3.5 h-3.5 mr-1" /> Archivovať
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="sm" onClick={() => restore(pos.id)}>
+                          <ArchiveRestore className="w-3.5 h-3.5 mr-1" /> Obnoviť
                         </Button>
                       )}
                     </div>

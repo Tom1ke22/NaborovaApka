@@ -46,6 +46,8 @@ export interface PositionListItem {
 }
 
 export interface Position extends PositionListItem {
+  /** Počet prihlásených záujemcov. Chodí iba z admin zoznamu pozícií. */
+  applicant_count?: number
   description: string | null
   additional_info: string | null
   working_hours: string | null
@@ -65,4 +67,74 @@ export interface Position extends PositionListItem {
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+}
+
+/* --------------------------------------------------------------------------
+ * AI hodnotenie uchádzača
+ *
+ * Zodpovedá obsahu `applicants.qualification_answers` z backendu
+ * (app/core/ai/evaluate.py). Všetko je nepovinné: kým hodnotenie nedobehne,
+ * pole je prázdny objekt.
+ * ------------------------------------------------------------------------ */
+
+export type AiAnswer = 'yes' | 'no' | 'unknown'
+export type AiSource = 'cv' | 'chat' | 'both' | 'none'
+
+export const AI_SOURCE_LABELS: Record<AiSource, string> = {
+  cv: 'zo životopisu',
+  chat: 'z chatu',
+  both: 'zo životopisu aj z chatu',
+  none: '',
+}
+
+/** Jedna požiadavka pozície po porovnaní s profilom uchádzača. */
+export interface AiCriterion {
+  key: string
+  label: string
+  status: AiAnswer
+  weight: number
+  earned: number
+  detail: string
+  source: AiSource
+}
+
+export interface AiScoreDetail {
+  score: number
+  reasoning: string
+  requirements_ratio: number | null
+  overall_fit: number
+  criteria: AiCriterion[]
+}
+
+/** Fakt vytiahnutý z CV alebo chatu. Tvar sa líši podľa typu požiadavky. */
+export interface AiFact {
+  value?: AiAnswer
+  level?: string | null
+  meets_requirement?: AiAnswer
+  years?: number | null
+  summary?: string | null
+  source: AiSource
+  evidence: string | null
+}
+
+export interface AiProfile {
+  hygiene_minimum: AiFact
+  health_certificate: AiFact
+  experience: AiFact
+  education: AiFact
+  slovak_language: AiFact
+  foreign_language: AiFact
+  custom_instructions_findings: string | null
+  overall_fit: number
+  summary: string | null
+}
+
+export interface AiEvaluation {
+  score?: AiScoreDetail
+  profile?: AiProfile
+  sources?: {
+    cv_text_chars: number
+    chat_messages: number
+    model: string
+  }
 }

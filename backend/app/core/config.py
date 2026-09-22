@@ -20,5 +20,16 @@ class Settings(BaseSettings):
 
     env: str = "development"
 
+    # AI (Gemini). Bez kľúča alebo s AI_ENABLED=false beží chatbot ako stub
+    # a hodnotenie uchádzačov sa preskočí (uchádzač ostane bez skóre).
+    ai_enabled: bool = True
+    gemini_api_key: str = ""
+    gemini_chat_model: str = "gemini-3.1-flash-lite"
+    gemini_extraction_model: str = "gemini-3.1-flash-lite"
+
+    @property
+    def ai_available(self) -> bool:
+        return self.ai_enabled and bool(self.gemini_api_key)
+
 
 settings = Settings()

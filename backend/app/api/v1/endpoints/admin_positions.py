@@ -2,19 +2,25 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_company_id
 from app.db.base import get_db
+from app.models.applicant import Applicant
 from app.models.position import Position, PositionRequirements, PositionStatusEnum
-from app.schemas.position import PositionCreate, PositionOut, PositionUpdate
+from app.schemas.position import (
+    AdminPositionOut,
+    PositionCreate,
+    PositionOut,
+    PositionUpdate,
+)
 
 router = APIRouter(prefix="/admin/positions", tags=["admin-positions"])
 
 
-@router.get("", response_model=list[PositionOut])
+@router.get("", response_model=list[AdminPositionOut])
 async def admin_list_positions(
     db: AsyncSession = Depends(get_db),
     company_id: uuid.UUID = Depends(get_company_id),
@@ -25,7 +31,22 @@ async def admin_list_positions(
         .where(Position.company_id == company_id)
         .order_by(Position.created_at.desc())
     )
-    return result.scalars().all()
+    positions = result.scalars().all()
+
+    # Počty jedným dotazom, nie per pozícia.
+    counts = await db.execute(
+        select(Applicant.position_id, func.count(Applicant.id))
+        .where(Applicant.company_id == company_id)
+        .group_by(Applicant.position_id)
+    )
+    counts_by_position = dict(counts.all())
+
+    return [
+        AdminPositionOut.model_validate(position).model_copy(
+            update={"applicant_count": counts_by_position.get(position.id, 0)}
+        )
+        for position in positions
+    ]
 
 
 @router.post("", response_model=PositionOut, status_code=status.HTTP_201_CREATED)

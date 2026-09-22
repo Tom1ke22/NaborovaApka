@@ -47,26 +47,46 @@ export default function Chat() {
         body: JSON.stringify({ session_id: sessionId, message: userMsg }),
       })
 
-      const reader = response.body!.getReader()
-      const decoder = new TextDecoder()
+      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
 
-      while (true) {
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      // Sieťový chunk môže skončiť uprostred rámca aj uprostred viacbajtového
+      // znaku (á, č, š). Preto dekódujeme s { stream: true } a nedočítaný
+      // zvyšok si držíme v buffri do ďalšieho kola.
+      let buffer = ''
+      let finished = false
+
+      const appendToLastMessage = (text: string) =>
+        setMessages((prev) => {
+          const updated = [...prev]
+          const last = updated[updated.length - 1]
+          updated[updated.length - 1] = { ...last, content: last.content + text }
+          return updated
+        })
+
+      while (!finished) {
         const { done, value } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n')
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            if (data === '[DONE]') break
-            setMessages((prev) => {
-              const updated = [...prev]
-              updated[updated.length - 1] = {
-                ...updated[updated.length - 1],
-                content: updated[updated.length - 1].content + data,
-              }
-              return updated
-            })
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // Rámce server-sent events sú oddelené prázdnym riadkom.
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() ?? ''
+
+        for (const frame of frames) {
+          const line = frame.split('\n').find((l) => l.startsWith('data: '))
+          if (!line) continue
+          try {
+            const payload = JSON.parse(line.slice(6)) as { t?: string; done?: boolean }
+            if (payload.done) {
+              finished = true
+              break
+            }
+            if (payload.t) appendToLastMessage(payload.t)
+          } catch {
+            // Poškodený rámec preskočíme, zvyšok odpovede dobehne.
           }
         }
       }

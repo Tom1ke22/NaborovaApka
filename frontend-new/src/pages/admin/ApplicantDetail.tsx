@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Download, Star, MessageSquare } from 'lucide-react'
+import { RequirementsCard } from '@/components/AiEvaluation'
+import type { AiEvaluation } from '@/types'
+import { ArrowLeft, Download, MessageSquare } from 'lucide-react'
 
 interface ApplicantDetail {
   id: string
@@ -15,7 +16,7 @@ interface ApplicantDetail {
   cv_storage_path: string | null
   ai_score: number | null
   ai_score_reasoning: string | null
-  qualification_answers: Record<string, unknown>
+  qualification_answers: AiEvaluation
   submitted_at: string
   position_id: string
 }
@@ -25,6 +26,12 @@ interface ChatMsg { role: string; content: string; created_at: string }
 export default function AdminApplicantDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+
+  // Odkiaľ sme prišli: zo zoznamu filtrovaného na pozíciu, alebo zo všetkých.
+  const positionId = searchParams.get('position')
+  const backTo = `/admin/applicants${positionId ? `?position=${positionId}` : ''}`
+
   const [applicant, setApplicant] = useState<ApplicantDetail | null>(null)
   const [chat, setChat] = useState<ChatMsg[]>([])
   const [loading, setLoading] = useState(true)
@@ -50,7 +57,7 @@ export default function AdminApplicantDetail() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4">
-        <button onClick={() => navigate('/admin/applicants')} className="text-gray-400 hover:text-gray-600">
+        <button onClick={() => navigate(backTo)} className="text-gray-400 hover:text-gray-600">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-lg font-semibold text-gray-900">{applicant.first_name} {applicant.last_name}</h1>
@@ -61,7 +68,7 @@ export default function AdminApplicantDetail() {
         )}
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-4">
           <Card>
             <CardContent className="p-5 space-y-3">
@@ -75,35 +82,10 @@ export default function AdminApplicantDetail() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="p-5">
-              <h2 className="font-semibold text-gray-900 mb-3">AI hodnotenie</h2>
-              {applicant.ai_score != null ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Badge variant={applicant.ai_score >= 7 ? 'success' : applicant.ai_score >= 5 ? 'default' : 'secondary'} className="text-base px-3 py-1">
-                      <Star className="w-4 h-4 mr-1" />{applicant.ai_score}/10
-                    </Badge>
-                  </div>
-                  {applicant.ai_score_reasoning && <p className="text-sm text-gray-600">{applicant.ai_score_reasoning}</p>}
-                </div>
-              ) : (
-                <p className="text-sm text-gray-400">Skóre ešte nie je k dispozícii</p>
-              )}
-            </CardContent>
-          </Card>
-
-          {Object.keys(applicant.qualification_answers).length > 0 && (
-            <Card>
-              <CardContent className="p-5">
-                <h2 className="font-semibold text-gray-900 mb-3">Kvalifikačné odpovede</h2>
-                <pre className="text-xs text-gray-600 whitespace-pre-wrap">{JSON.stringify(applicant.qualification_answers, null, 2)}</pre>
-              </CardContent>
-            </Card>
-          )}
+          <RequirementsCard evaluation={applicant.qualification_answers ?? {}} />
         </div>
 
-        <div className="lg:col-span-2">
+        <div>
           <Card>
             <CardContent className="p-5">
               <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">

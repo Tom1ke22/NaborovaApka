@@ -96,6 +96,16 @@ class PositionOut(BaseModel):
     requirements: PositionRequirementsOut | None = None
 
 
+class AdminPositionOut(PositionOut):
+    """Pozícia v admin zozname. Navyše nesie počet prihlásených záujemcov.
+
+    Zámerne je oddelená od `PositionOut`, ktorý chodí aj na verejné
+    endpointy — počet záujemcov je interný údaj.
+    """
+
+    applicant_count: int = 0
+
+
 class PositionListItem(BaseModel):
     """Skrátený výstup pre verejný zoznam pozícií (karta)."""
     model_config = ConfigDict(from_attributes=True)

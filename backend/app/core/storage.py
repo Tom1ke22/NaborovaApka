@@ -1,13 +1,23 @@
+import logging
 import os
 from abc import ABC, abstractmethod
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class StorageBackend(ABC):
     @abstractmethod
     async def save(self, data: bytes, filename: str) -> str:
         """Ulož súbor, vráť storage_path ktorý sa uloží do DB."""
+
+    @abstractmethod
+    async def load(self, storage_path: str) -> bytes | None:
+        """Načítaj súbor späť. None ak neexistuje alebo sa nedá prečítať.
+
+        Potrebuje to AI hodnotenie, ktoré si z uloženého CV vytiahne text.
+        """
 
     @abstractmethod
     async def generate_signed_url(self, storage_path: str) -> str | None:
@@ -23,6 +33,14 @@ class LocalStorage(StorageBackend):
         with open(path, "wb") as f:
             f.write(data)
         return path
+
+    async def load(self, storage_path: str) -> bytes | None:
+        try:
+            with open(storage_path, "rb") as f:
+                return f.read()
+        except OSError:
+            logger.warning("CV sa nedá prečítať z disku: %s", storage_path)
+            return None
 
     async def generate_signed_url(self, storage_path: str) -> str | None:
         # Lokálne súbory servujeme cez /cv/download endpoint
@@ -40,6 +58,22 @@ class GCSStorage(StorageBackend):
         blob = self._bucket.blob(object_name)
         blob.upload_from_string(data, content_type="application/octet-stream")
         return object_name
+
+    async def load(self, storage_path: str) -> bytes | None:
+        import asyncio
+
+        def _download() -> bytes | None:
+            blob = self._bucket.blob(storage_path)
+            if not blob.exists():
+                return None
+            return blob.download_as_bytes()
+
+        try:
+            # Knižnica GCS je synchrónna, preto ju pustíme mimo event loop.
+            return await asyncio.to_thread(_download)
+        except Exception:  # noqa: BLE001
+            logger.warning("CV sa nedá stiahnuť z GCS: %s", storage_path, exc_info=True)
+            return None
 
     async def generate_signed_url(self, storage_path: str) -> str | None:
         import datetime

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import type { Position } from '@/types'
 import { ArrowLeft, Star, User } from 'lucide-react'
 
 interface ApplicantRow {
@@ -19,20 +19,31 @@ interface ApplicantRow {
 
 export default function AdminApplicants() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const positionId = searchParams.get('position')
+
   const [applicants, setApplicants] = useState<ApplicantRow[]>([])
+  const [positionTitle, setPositionTitle] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [sortBy, setSortBy] = useState<'date' | 'score'>('date')
 
   useEffect(() => {
-    api.get('/admin/applicants')
+    setLoading(true)
+    api.get('/admin/applicants', { params: positionId ? { position_id: positionId } : undefined })
       .then((r) => setApplicants(r.data))
       .finally(() => setLoading(false))
-  }, [])
+  }, [positionId])
 
-  const sorted = [...applicants].sort((a, b) => {
-    if (sortBy === 'score') return (b.ai_score ?? -1) - (a.ai_score ?? -1)
-    return new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime()
-  })
+  // Názov pozície do hlavičky. Admin nemá endpoint na jednu pozíciu,
+  // tak ho vytiahneme zo zoznamu — prežije to aj obnovenie stránky.
+  useEffect(() => {
+    if (!positionId) {
+      setPositionTitle(null)
+      return
+    }
+    api.get('/admin/positions')
+      .then((r) => setPositionTitle((r.data as Position[]).find((p) => p.id === positionId)?.title ?? null))
+      .catch(() => setPositionTitle(null))
+  }, [positionId])
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -40,11 +51,11 @@ export default function AdminApplicants() {
         <button onClick={() => navigate('/admin/positions')} className="text-gray-400 hover:text-gray-600">
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-lg font-semibold text-gray-900">Záujemcovia</h1>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-sm text-gray-500">Zoradiť:</span>
-          <Button variant={sortBy === 'date' ? 'default' : 'outline'} size="sm" onClick={() => setSortBy('date')}>Dátum</Button>
-          <Button variant={sortBy === 'score' ? 'default' : 'outline'} size="sm" onClick={() => setSortBy('score')}>AI skóre</Button>
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold text-gray-900">
+            Záujemcovia{!loading && ` (${applicants.length})`}
+          </h1>
+          {positionTitle && <p className="truncate text-sm text-gray-500">{positionTitle}</p>}
         </div>
       </div>
 
@@ -53,15 +64,19 @@ export default function AdminApplicants() {
           <div className="flex justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-600 border-t-transparent" />
           </div>
-        ) : sorted.length === 0 ? (
-          <div className="text-center py-16 text-gray-400">Zatiaľ žiadni záujemcovia</div>
+        ) : applicants.length === 0 ? (
+          <div className="text-center py-16 text-gray-400">
+            {positionId ? 'Na túto pozíciu sa zatiaľ nikto neprihlásil' : 'Zatiaľ žiadni záujemcovia'}
+          </div>
         ) : (
           <div className="space-y-3">
-            {sorted.map((app) => (
+            {applicants.map((app) => (
               <Card
                 key={app.id}
                 className="hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => navigate(`/admin/applicants/${app.id}`)}
+                // Filter nesieme so sebou, nech sa zo šípky v detaile
+                // vrátime naspäť do zoznamu pre danú pozíciu.
+                onClick={() => navigate(`/admin/applicants/${app.id}${positionId ? `?position=${positionId}` : ''}`)}
               >
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between gap-4">

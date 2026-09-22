@@ -1,10 +1,21 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.ai.evaluate import evaluate_applicant
 from app.core.limiter import limiter
 from app.core.storage import get_storage
 from app.db.base import get_db
@@ -34,6 +45,7 @@ async def _get_active_company(slug: str, db: AsyncSession) -> Company:
 async def submit_application(
     request: Request,
     slug: str,
+    background_tasks: BackgroundTasks,
     position_id: uuid.UUID = Form(...),
     session_id: str = Form(...),
     first_name: str = Form(...),
@@ -90,4 +102,9 @@ async def submit_application(
         )
 
     await db.commit()
+
+    # AI hodnotenie beží až po odoslaní odpovede, aby uchádzač nečakal na model.
+    # Keď zlyhá, prihláška ostane uložená a uchádzač bude len bez skóre.
+    background_tasks.add_task(evaluate_applicant, applicant_id)
+
     return {"id": str(applicant_id)}
