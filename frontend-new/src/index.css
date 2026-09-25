@@ -1,11 +1,198 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   Dizajnový systém NáborováApka
+   --------------------------------------------------------------------------
+   Farby sú zámerne „teplo-pokojné": jedna výrazná značková (indigo), jedna
+   doplnková (tyrkysová) a mäkké pastelové plochy. Semantické farby (zelená,
+   jantárová, ružová) sa používajú iba na stavy — nie na dekoráciu.
+   ========================================================================== */
+
+@theme {
+  /* ---- Značková farba: indigo ------------------------------------------ */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+  --color-brand-950: #1e1b4b;
+
+  /* ---- Doplnková farba: tyrkysová (AI, chat, pozitívne akcie) ---------- */
+  --color-accent-50: #f0fdfa;
+  --color-accent-100: #ccfbf1;
+  --color-accent-200: #99f6e4;
+  --color-accent-300: #5eead4;
+  --color-accent-400: #2dd4bf;
+  --color-accent-500: #14b8a6;
+  --color-accent-600: #0d9488;
+  --color-accent-700: #0f766e;
+  --color-accent-800: #115e59;
+  --color-accent-900: #134e4a;
+
+  /* ---- Plochy, linky, text -------------------------------------------- */
+  --color-surface: #f5f6fc;
+  --color-surface-sunken: #eceffa;
+  --color-line: #e4e7f2;
+  --color-line-strong: #d3d8e8;
+  --color-ink: #161b2e;
+  --color-ink-soft: #5b6478;
+  --color-ink-faint: #8b93a7;
+
+  /* ---- Typografia ------------------------------------------------------ */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* ---- Tiene ----------------------------------------------------------- */
+  --shadow-soft: 0 1px 2px rgb(22 27 46 / 0.04), 0 6px 20px -10px rgb(22 27 46 / 0.14);
+  --shadow-lift: 0 2px 4px rgb(22 27 46 / 0.04), 0 18px 34px -16px rgb(79 70 229 / 0.28);
+  --shadow-brand: 0 1px 2px rgb(49 46 129 / 0.2), 0 8px 18px -8px rgb(79 70 229 / 0.5);
+
+  /* ---- Animácie -------------------------------------------------------- */
+  --animate-rise: rise 0.42s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  --animate-fade: fade 0.3s ease-out both;
+  --animate-pop: pop 0.28s cubic-bezier(0.2, 0.8, 0.3, 1.25) both;
+  --animate-slide-left: slide-left 0.32s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  --animate-blink: blink 1.1s ease-in-out infinite;
+  --animate-bounce-dot: bounce-dot 1.1s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slide-left {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.15; }
+}
+@keyframes bounce-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
 @layer base {
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
-    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-    background: #f9fafb;
-    color: #111827;
+    font-family: var(--font-sans);
+    background-color: var(--color-surface);
+    color: var(--color-ink);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--color-brand-200);
+    color: var(--color-brand-900);
+  }
+
+  :focus-visible {
+    outline: none;
+  }
+}
+
+@layer components {
+  /* Jemné farebné pozadie stránky — dva rozmazané „obláčiky" v rohoch.
+     Dáva farbu bez toho, aby to pôsobilo pestro. */
+  .bg-canvas {
+    background-color: var(--color-surface);
+    background-image:
+      radial-gradient(48rem 26rem at 8% -6%, rgb(99 102 241 / 0.16), transparent 62%),
+      radial-gradient(40rem 24rem at 102% 2%, rgb(20 184 166 / 0.14), transparent 60%);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+  }
+
+  /* Tmavší variant pre hlavičky administrácie a hero sekcie. */
+  .bg-brand-gradient {
+    background-image: linear-gradient(135deg, #4338ca 0%, #4f46e5 45%, #0f766e 140%);
+  }
+
+  /* Tenký farebný prúžok na ľavom okraji karty.
+     Rieši sa pseudo-prvkom, nie `box-shadow: inset` — ten by prebili
+     utility triedy shadow-*, ktoré má karta na tieň aj na hover. */
+  .stripe-brand,
+  .stripe-accent,
+  .stripe-muted {
+    position: relative;
+    overflow: hidden;
+  }
+  .stripe-brand::before,
+  .stripe-accent::before,
+  .stripe-muted::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 4px;
+  }
+  .stripe-brand::before {
+    background: linear-gradient(180deg, var(--color-brand-500), var(--color-accent-500));
+  }
+  .stripe-accent::before {
+    background: var(--color-accent-500);
+  }
+  .stripe-muted::before {
+    background: var(--color-line-strong);
+  }
+
+  /* Vlastný posuvník — chat a dlhé zoznamy. */
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+  .scroll-slim::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    background-color: var(--color-line-strong);
+    border-radius: 9999px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-ink-faint);
+  }
+  .scroll-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

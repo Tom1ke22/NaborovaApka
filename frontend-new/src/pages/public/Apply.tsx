@@ -4,7 +4,18 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
-import { ArrowLeft, CheckCircle, Upload } from 'lucide-react'
+import { Field } from '@/components/ui/field'
+import { PublicShell } from '@/components/PublicShell'
+import {
+  ArrowLeft,
+  CircleCheck,
+  Upload,
+  FileText,
+  TriangleAlert,
+  X,
+  Send,
+  ShieldCheck,
+} from 'lucide-react'
 
 type FieldKey = 'first_name' | 'last_name' | 'phone' | 'email'
 type FieldErrors = Partial<Record<FieldKey, string>>
@@ -48,13 +59,16 @@ export default function Apply() {
     if (field === 'first_name') return form.first_name.trim().length > 0
     if (field === 'last_name') return form.last_name.trim().length > 0
     if (field === 'email') return EMAIL_RE.test(form.email)
-    if (field === 'phone') { const d = phoneDigits(form.phone); return d >= 9 && d <= 15 }
+    if (field === 'phone') {
+      const d = phoneDigits(form.phone)
+      return d >= 9 && d <= 15
+    }
     return false
   }
 
   function fieldClass(field: FieldKey) {
-    if (fieldErrors[field]) return 'border-red-400 focus:ring-red-400'
-    if (isValid(field)) return 'border-green-400 focus:ring-green-400'
+    if (fieldErrors[field]) return 'border-rose-400 hover:border-rose-400 focus:border-rose-500 focus:ring-rose-500/20'
+    if (isValid(field)) return 'border-emerald-400 hover:border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20'
     return ''
   }
 
@@ -79,7 +93,10 @@ export default function Apply() {
 
   function handleCv(file: File | null) {
     setCvError(null)
-    if (!file) { setCv(null); return }
+    if (!file) {
+      setCv(null)
+      return
+    }
     const ext = file.name.split('.').pop()?.toLowerCase()
     if (!['pdf', 'docx'].includes(ext ?? '')) {
       setCvError('Povolené sú iba PDF a DOCX súbory')
@@ -139,68 +156,82 @@ export default function Apply() {
     }
   }
 
-  if (submitted) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-      <div className="bg-white rounded-2xl shadow-lg p-10 max-w-md w-full text-center">
-        <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Ďakujeme!</h2>
-        <p className="text-gray-500 mb-6">
-          Vaša prihláška bola úspešne odoslaná. Budeme vás kontaktovať.
-        </p>
-        <Button variant="outline" onClick={() => navigate(`/${slug}`)}>
-          Späť na pozície
-        </Button>
+  /* ---------------------------------------------------------------------- */
+  /* Potvrdenie po odoslaní                                                  */
+  /* ---------------------------------------------------------------------- */
+
+  if (submitted)
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-canvas px-4 py-10">
+        <Card className="w-full max-w-md overflow-hidden animate-pop">
+          <div className="flex flex-col items-center bg-gradient-to-b from-emerald-50 to-white px-8 pt-10 text-center">
+            <span className="grid h-20 w-20 place-items-center rounded-full bg-emerald-100 text-emerald-600 ring-8 ring-emerald-50">
+              <CircleCheck className="h-10 w-10" strokeWidth={2.2} />
+            </span>
+            <h2 className="mt-5 text-2xl font-bold tracking-tight text-ink">Ďakujeme!</h2>
+            <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+              Vaša prihláška bola úspešne odoslaná. Ozveme sa vám na uvedený kontakt.
+            </p>
+          </div>
+          <CardContent className="flex flex-col gap-2 p-6">
+            <Button onClick={() => navigate(`/${slug}`)} size="lg" className="w-full">
+              Späť na pozície
+            </Button>
+          </CardContent>
+        </Card>
       </div>
-    </div>
-  )
+    )
+
+  /* ---------------------------------------------------------------------- */
+  /* Formulár                                                                */
+  /* ---------------------------------------------------------------------- */
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-lg mx-auto px-4 py-10">
+    <PublicShell slug={slug}>
+      <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
         <button
           onClick={() => navigate(-1)}
-          className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-6"
+          className="group mb-6 inline-flex items-center gap-2 text-sm font-medium text-ink-soft transition-colors hover:text-brand-700"
         >
-          <ArrowLeft className="w-4 h-4" /> Späť
+          <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+          Späť
         </button>
 
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Prejavenie záujmu</h1>
-        <p className="text-gray-500 mb-8 text-sm">
-          Vyplňte kontaktné údaje a prípadne priložte životopis. Budeme vás kontaktovať.
-        </p>
+        <Card className="overflow-hidden animate-rise">
+          <div className="bg-brand-gradient px-6 py-7 sm:px-8">
+            <h1 className="text-2xl font-bold tracking-tight text-white">Prejavenie záujmu</h1>
+            <p className="mt-1.5 text-sm text-white/75">
+              Vyplňte kontaktné údaje a prípadne priložte životopis.
+            </p>
+          </div>
 
-        <Card>
-          <CardContent className="p-6">
-            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Meno *</label>
+          <CardContent className="p-6 sm:p-8">
+            <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                <Field label="Meno" required error={fieldErrors.first_name}>
                   <Input
                     placeholder="Ján"
                     value={form.first_name}
                     onChange={(e) => handleName('first_name', e.target.value)}
                     className={fieldClass('first_name')}
                   />
-                  {fieldErrors.first_name && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.first_name}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Priezvisko *</label>
+                </Field>
+                <Field label="Priezvisko" required error={fieldErrors.last_name}>
                   <Input
                     placeholder="Novák"
                     value={form.last_name}
                     onChange={(e) => handleName('last_name', e.target.value)}
                     className={fieldClass('last_name')}
                   />
-                  {fieldErrors.last_name && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.last_name}</p>
-                  )}
-                </div>
+                </Field>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Telefón *</label>
+              <Field
+                label="Telefón"
+                required
+                error={fieldErrors.phone}
+                hint="Na toto číslo vám zavoláme."
+              >
                 <Input
                   type="tel"
                   placeholder="+421 9XX XXX XXX"
@@ -208,13 +239,9 @@ export default function Apply() {
                   onChange={(e) => handlePhone(e.target.value)}
                   className={fieldClass('phone')}
                 />
-                {fieldErrors.phone && (
-                  <p className="text-xs text-red-500 mt-1">{fieldErrors.phone}</p>
-                )}
-              </div>
+              </Field>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+              <Field label="Email" required error={fieldErrors.email}>
                 <Input
                   type="email"
                   placeholder="jan.novak@email.sk"
@@ -222,45 +249,97 @@ export default function Apply() {
                   onChange={(e) => handleEmail(e.target.value)}
                   className={fieldClass('email')}
                 />
-                {fieldErrors.email && (
-                  <p className="text-xs text-red-500 mt-1">{fieldErrors.email}</p>
+              </Field>
+
+              {/* Nahratie životopisu */}
+              <Field
+                label="Životopis"
+                hint={cvError ? undefined : 'Voliteľné · PDF alebo DOCX, max. 10 MB'}
+                error={cvError ?? undefined}
+              >
+                {cv ? (
+                  <div className="flex items-center gap-3 rounded-xl border border-emerald-300 bg-emerald-50/70 px-4 py-3.5">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white text-emerald-600 ring-1 ring-inset ring-emerald-200">
+                      <FileText className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-ink">{cv.name}</p>
+                      <p className="text-xs text-emerald-700">
+                        {(cv.size / 1024 / 1024).toFixed(1)} MB · pripravené na odoslanie
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCv(null)}
+                      aria-label="Odstrániť životopis"
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-faint transition-colors hover:bg-white hover:text-rose-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label
+                    className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed px-4 py-5 transition-colors ${
+                      cvError
+                        ? 'border-rose-300 bg-rose-50/60'
+                        : 'border-line-strong bg-white hover:border-brand-400 hover:bg-brand-50/50'
+                    }`}
+                  >
+                    <span
+                      className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${
+                        cvError ? 'bg-rose-100 text-rose-500' : 'bg-brand-50 text-brand-500'
+                      }`}
+                    >
+                      {cvError ? (
+                        <TriangleAlert className="h-5 w-5" />
+                      ) : (
+                        <Upload className="h-5 w-5" />
+                      )}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-ink">
+                        Kliknite pre nahratie životopisu
+                      </span>
+                      <span className="block text-xs text-ink-faint">
+                        Pomôže nám lepšie posúdiť vaše skúsenosti.
+                      </span>
+                    </span>
+                    <input
+                      type="file"
+                      accept=".pdf,.docx"
+                      className="hidden"
+                      onChange={(e) => handleCv(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
                 )}
-              </div>
+              </Field>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Životopis (voliteľné)</label>
-                <label className={`flex items-center gap-3 border-2 border-dashed rounded-lg p-4 cursor-pointer transition-colors ${
-                  cvError
-                    ? 'border-red-400'
-                    : cv
-                    ? 'border-green-400'
-                    : 'border-gray-200 hover:border-blue-400'
-                }`}>
-                  <Upload className={`w-5 h-5 shrink-0 ${cvError ? 'text-red-400' : cv ? 'text-green-500' : 'text-gray-400'}`} />
-                  <span className="text-sm text-gray-500 truncate">
-                    {cv
-                      ? `${cv.name} (${(cv.size / 1024 / 1024).toFixed(1)} MB)`
-                      : 'Kliknite pre nahratie PDF alebo DOCX'}
-                  </span>
-                  <input
-                    type="file"
-                    accept=".pdf,.docx"
-                    className="hidden"
-                    onChange={(e) => handleCv(e.target.files?.[0] ?? null)}
-                  />
-                </label>
-                {cvError && <p className="text-xs text-red-500 mt-1">{cvError}</p>}
-              </div>
-
-              {submitError && <p className="text-sm text-red-600">{submitError}</p>}
+              {submitError && (
+                <p className="flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 ring-1 ring-inset ring-rose-100">
+                  <TriangleAlert className="h-4 w-4 shrink-0" />
+                  {submitError}
+                </p>
+              )}
 
               <Button type="submit" className="w-full" size="lg" disabled={submitting}>
-                {submitting ? 'Odosiela sa...' : 'Odoslať prihlášku'}
+                {submitting ? (
+                  'Odosiela sa…'
+                ) : (
+                  <>
+                    <Send className="h-4 w-4" />
+                    Odoslať prihlášku
+                  </>
+                )}
               </Button>
+
+              <p className="flex items-center justify-center gap-1.5 text-xs text-ink-faint">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Údaje slúžia výhradne na účely tohto výberového konania.
+              </p>
             </form>
           </CardContent>
         </Card>
       </div>
-    </div>
+    </PublicShell>
   )
 }

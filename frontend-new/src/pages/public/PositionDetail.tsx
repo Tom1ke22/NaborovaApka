@@ -3,9 +3,30 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { type Position, CONTRACT_TYPE_LABELS, SALARY_PERIOD_LABELS } from '@/types'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
-import { ArrowLeft, MapPin, Euro, Users, Calendar, CheckCircle } from 'lucide-react'
+import { InfoChip, DetailRow } from '@/components/ui/info-chip'
+import { PageLoader } from '@/components/ui/spinner'
+import { PublicShell } from '@/components/PublicShell'
+import { formatDateShort, formatMoney, plural } from '@/lib/utils'
+import {
+  ArrowLeft,
+  MapPin,
+  Euro,
+  Users,
+  Calendar,
+  CircleCheck,
+  MessageSquare,
+  FileText,
+  Info,
+  ListChecks,
+  Clock,
+  Timer,
+  Coffee,
+  Sofa,
+  Utensils,
+  User,
+  Sparkles,
+} from 'lucide-react'
 
 export default function PositionDetail() {
   const { slug, positionId } = useParams<{ slug: string; positionId: string }>()
@@ -14,121 +35,198 @@ export default function PositionDetail() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.get(`/${slug}/positions/${positionId}`)
+    api
+      .get(`/${slug}/positions/${positionId}`)
       .then((r) => setPosition(r.data))
       .catch(() => navigate(`/${slug}`))
       .finally(() => setLoading(false))
   }, [slug, positionId, navigate])
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-600 border-t-transparent" />
-    </div>
-  )
-
+  if (loading) return <PageLoader label="Načítavame pozíciu…" />
   if (!position) return null
 
   const req = position.requirements
+  const requirementItems = req
+    ? [
+        req.education_level && `Vzdelanie: ${req.education_level}`,
+        req.experience_required &&
+          `Prax: ${
+            req.experience_years
+              ? `min. ${req.experience_years} ${plural(req.experience_years, 'rok', 'roky', 'rokov')}`
+              : 'požadovaná'
+          }`,
+        req.slovak_language_level && `Slovenčina: ${req.slovak_language_level}`,
+        req.foreign_language_level && `Cudzí jazyk: ${req.foreign_language_level}`,
+        req.hygiene_minimum_required && 'Hygienické minimum',
+        req.health_certificate_required && 'Zdravotný preukaz',
+      ].filter((x): x is string => Boolean(x))
+    : []
+
+  const conditions = [
+    position.working_hours && { icon: Clock, label: 'Pracovný čas', value: position.working_hours },
+    position.shift_type && { icon: Timer, label: 'Zmennosť', value: position.shift_type },
+    position.work_regime && { icon: Timer, label: 'Pracovný režim', value: position.work_regime },
+    position.break_info && { icon: Coffee, label: 'Prestávka', value: position.break_info },
+    position.vacation_days != null && {
+      icon: Sofa,
+      label: 'Dovolenka',
+      value: `${position.vacation_days} ${plural(position.vacation_days, 'deň', 'dni', 'dní')}`,
+    },
+    position.meal_allowance && {
+      icon: Utensils,
+      label: 'Stravné',
+      value: position.meal_allowance,
+    },
+    position.contact_person && {
+      icon: User,
+      label: 'Kontaktná osoba',
+      value: position.contact_person,
+    },
+  ].filter((x): x is { icon: typeof Clock; label: string; value: string } => Boolean(x))
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-4 py-8">
+    <PublicShell slug={slug}>
+      <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
         <button
           onClick={() => navigate(`/${slug}`)}
-          className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-6"
+          className="group mb-6 inline-flex items-center gap-2 rounded-lg py-1 text-sm font-medium text-ink-soft transition-colors hover:text-brand-700"
         >
-          <ArrowLeft className="w-4 h-4" /> Späť na zoznam pozícií
+          <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+          Späť na zoznam pozícií
         </button>
 
-        <div className="mb-6">
-          <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
-            <h1 className="text-3xl font-bold text-gray-900">{position.title}</h1>
-            <Badge className="text-sm px-3 py-1">{CONTRACT_TYPE_LABELS[position.contract_type]}</Badge>
+        {/* Hlavička pozície */}
+        <Card className="overflow-hidden animate-rise">
+          <div className="bg-brand-gradient px-6 py-7 sm:px-8">
+            <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+              <div className="min-w-0 flex-1">
+                <h1 className="text-2xl font-bold leading-tight tracking-tight text-white sm:text-3xl">
+                  {position.title}
+                </h1>
+                <p className="mt-1.5 text-sm text-white/75">{position.work_area}</p>
+              </div>
+              <span className="rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-inset ring-white/25">
+                {CONTRACT_TYPE_LABELS[position.contract_type]}
+              </span>
+            </div>
           </div>
-          <p className="text-gray-500 mb-4">{position.work_area}</p>
 
-          <div className="flex flex-wrap gap-4 text-sm text-gray-600">
-            <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4 text-gray-400" />{position.location}</span>
+          <CardContent className="flex flex-wrap gap-2 p-5 sm:px-8">
+            <InfoChip icon={MapPin} tone="brand">
+              {position.location}
+            </InfoChip>
             {position.salary_amount && (
-              <span className="flex items-center gap-1.5">
-                <Euro className="w-4 h-4 text-gray-400" />
-                {Number(position.salary_amount).toLocaleString('sk-SK')} € / {SALARY_PERIOD_LABELS[position.salary_period]}
-              </span>
+              <InfoChip icon={Euro} tone="emerald">
+                {formatMoney(position.salary_amount)} / {SALARY_PERIOD_LABELS[position.salary_period]}
+              </InfoChip>
             )}
-            <span className="flex items-center gap-1.5">
-              <Users className="w-4 h-4 text-gray-400" />
-              {position.open_slots} voľn{position.open_slots === 1 ? 'é miesto' : position.open_slots < 5 ? 'é miesta' : 'ých miest'}
-            </span>
+            <InfoChip icon={Users} tone="accent">
+              {position.open_slots}{' '}
+              {plural(position.open_slots, 'voľné miesto', 'voľné miesta', 'voľných miest')}
+            </InfoChip>
             {position.start_date && (
-              <span className="flex items-center gap-1.5">
-                <Calendar className="w-4 h-4 text-gray-400" />
-                Nástup: {new Date(position.start_date).toLocaleDateString('sk-SK')}
-              </span>
+              <InfoChip icon={Calendar} tone="amber">
+                Nástup {formatDateShort(position.start_date)}
+              </InfoChip>
             )}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Ľavý stĺpec — obsah inzerátu */}
+          <div className="space-y-6 lg:col-span-2">
             {position.description && (
-              <Card>
-                <CardContent className="p-6">
-                  <h2 className="font-semibold text-gray-900 mb-3">Náplň práce</h2>
-                  <p className="text-gray-600 whitespace-pre-wrap leading-relaxed">{position.description}</p>
+              <Card className="animate-rise">
+                <CardContent className="p-6 sm:p-7">
+                  <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-ink">
+                    <FileText className="h-4 w-4 text-brand-500" />
+                    Náplň práce
+                  </h2>
+                  <p className="whitespace-pre-wrap leading-relaxed text-ink-soft">
+                    {position.description}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {requirementItems.length > 0 && (
+              <Card className="animate-rise">
+                <CardContent className="p-6 sm:p-7">
+                  <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-ink">
+                    <ListChecks className="h-4 w-4 text-accent-600" />
+                    Čo od vás očakávame
+                  </h2>
+                  <ul className="grid gap-2.5 sm:grid-cols-2">
+                    {requirementItems.map((item) => (
+                      <li
+                        key={item}
+                        className="flex items-start gap-2.5 rounded-xl bg-emerald-50/60 px-3.5 py-2.5 text-sm text-ink ring-1 ring-inset ring-emerald-100"
+                      >
+                        <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
                 </CardContent>
               </Card>
             )}
 
             {position.additional_info && (
-              <Card>
-                <CardContent className="p-6">
-                  <h2 className="font-semibold text-gray-900 mb-3">Doplňujúce informácie</h2>
-                  <p className="text-gray-600 whitespace-pre-wrap leading-relaxed">{position.additional_info}</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {req && (
-              <Card>
-                <CardContent className="p-6">
-                  <h2 className="font-semibold text-gray-900 mb-3">Požiadavky</h2>
-                  <ul className="space-y-2 text-sm text-gray-600">
-                    {req.education_level && <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-green-500 shrink-0" />Vzdelanie: {req.education_level}</li>}
-                    {req.experience_required && <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-green-500 shrink-0" />Prax: {req.experience_years ? `min. ${req.experience_years} rok${req.experience_years > 1 ? 'y' : ''}` : 'požadovaná'}</li>}
-                    {req.slovak_language_level && <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-green-500 shrink-0" />Slovenčina: {req.slovak_language_level}</li>}
-                    {req.foreign_language_level && <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-green-500 shrink-0" />Cudzí jazyk: {req.foreign_language_level}</li>}
-                    {req.hygiene_minimum_required && <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-green-500 shrink-0" />Hygienické minimum</li>}
-                    {req.health_certificate_required && <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-green-500 shrink-0" />Zdravotný preukaz</li>}
-                  </ul>
+              <Card className="animate-rise">
+                <CardContent className="p-6 sm:p-7">
+                  <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-ink">
+                    <Info className="h-4 w-4 text-amber-500" />
+                    Doplňujúce informácie
+                  </h2>
+                  <p className="whitespace-pre-wrap leading-relaxed text-ink-soft">
+                    {position.additional_info}
+                  </p>
                 </CardContent>
               </Card>
             )}
           </div>
 
-          <div className="space-y-4">
-            <Card>
-              <CardContent className="p-6 space-y-3">
-                <h2 className="font-semibold text-gray-900">Pracovné podmienky</h2>
-                {position.working_hours && <div className="text-sm"><span className="text-gray-500">Pracovný čas:</span><p className="text-gray-700">{position.working_hours}</p></div>}
-                {position.shift_type && <div className="text-sm"><span className="text-gray-500">Zmennnosť:</span><p className="text-gray-700">{position.shift_type}</p></div>}
-                {position.work_regime && <div className="text-sm"><span className="text-gray-500">Pracovný režim:</span><p className="text-gray-700">{position.work_regime}</p></div>}
-                {position.break_info && <div className="text-sm"><span className="text-gray-500">Prestávka:</span><p className="text-gray-700">{position.break_info}</p></div>}
-                {position.vacation_days != null && <div className="text-sm"><span className="text-gray-500">Dovolenka:</span><p className="text-gray-700">{position.vacation_days} dní</p></div>}
-                {position.meal_allowance && <div className="text-sm"><span className="text-gray-500">Stravné:</span><p className="text-gray-700">{position.meal_allowance}</p></div>}
-                {position.contact_person && <div className="text-sm"><span className="text-gray-500">Kontaktná osoba:</span><p className="text-gray-700">{position.contact_person}</p></div>}
-              </CardContent>
-            </Card>
+          {/* Pravý stĺpec — výzva k akcii a podmienky, drží sa pri scrollovaní */}
+          <div className="lg:sticky lg:top-24 lg:self-start">
+            <div className="space-y-4">
+              <Card className="overflow-hidden border-brand-200 animate-rise">
+                <CardContent className="p-6">
+                  <span className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-accent-50 px-2.5 py-1 text-[11px] font-semibold text-accent-700 ring-1 ring-inset ring-accent-100">
+                    <Sparkles className="h-3 w-3" />
+                    Odpoveď hneď
+                  </span>
+                  <h2 className="text-base font-semibold text-ink">Zaujala vás pozícia?</h2>
+                  <p className="mt-1.5 text-sm leading-relaxed text-ink-soft">
+                    Napíšte nášmu asistentovi. Odpovie na otázky k pozícii a potom môžete rovno
+                    prejaviť záujem.
+                  </p>
+                  <Button
+                    className="mt-5 w-full"
+                    size="lg"
+                    onClick={() => navigate(`/${slug}/${positionId}/chat`)}
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    Mám záujem / Chcem sa opýtať
+                  </Button>
+                </CardContent>
+              </Card>
 
-            <Button
-              className="w-full"
-              size="lg"
-              onClick={() => navigate(`/${slug}/${positionId}/chat`)}
-            >
-              Mám záujem / Chcem sa opýtať
-            </Button>
+              {conditions.length > 0 && (
+                <Card className="animate-rise">
+                  <CardContent className="p-6">
+                    <h2 className="mb-2 text-base font-semibold text-ink">Pracovné podmienky</h2>
+                    <div className="divide-y divide-line">
+                      {conditions.map(({ icon, label, value }) => (
+                        <DetailRow key={label} icon={icon} label={label} value={value} />
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </PublicShell>
   )
 }
