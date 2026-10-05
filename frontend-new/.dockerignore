@@ -1,0 +1,27 @@
+# Čo sa NESMIE dostať do build contextu. Docker .gitignore neberie do úvahy.
+
+# node_modules z hosta (macOS/arm64 binárky) by v builder stage prepísali to,
+# čo tam `npm ci` nainštaloval pre linux. esbuild/rollup majú platformovo
+# špecifické natívne binárky, takže `npm run build` by padol alebo by vyrobil
+# nefunkčný bundle. Zároveň je to najväčšia časť contextu.
+node_modules/
+
+# Build output — v image ho vyrobí `npm run build`, stará kópia z hosta
+# by len zavádzala.
+dist/
+dist-ssr/
+
+# Env súbory: Vite zapeká VITE_* premenné priamo do bundlu, takže sa sem
+# nesmú dostať ani náhodou.
+.env
+.env.*
+*.local
+
+# Git, OS, IDE, logy
+.git/
+.gitignore
+.DS_Store
+.vscode/
+.idea/
+*.log
+npm-debug.log*

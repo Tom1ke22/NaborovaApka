@@ -1,0 +1,43 @@
+# Čo sa NESMIE dostať do build contextu (a teda ani do image layers).
+#
+# Pozor: Docker build context .gitignore NEBERIE do úvahy. Bez tohto súboru
+# `COPY . .` zapečie do image aj súbory, ktoré git ignoruje — .env s kľúčmi
+# a uploads/ so skutočnými životopismi. Kto má image, má kľúč aj CV.
+
+# Tajomstvá: GEMINI_API_KEY, JWT_SECRET, DATABASE_URL.
+# Appka ich číta z prostredia (env_file v compose, env vars v Cloud Run),
+# nie zo súboru v image. V dev móde je .env aj tak dostupný cez volume
+# mount ./backend:/app z docker-compose.yml.
+.env
+.env.*
+*.env
+
+# Životopisy uchádzačov — osobné údaje. Adresár si LocalStorage vytvorí sám
+# pri prvom uploade (os.makedirs v app/core/storage.py).
+uploads/
+
+# Virtualenv z hosta: iná platforma aj iná verzia Pythonu než image (3.11 vs 3.12)
+.venv/
+venv/
+
+# Python smetie
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Testy a dev závislosti nepatria do produkčného image.
+# V dev móde ich do kontejnera dostane volume mount.
+tests/
+requirements-dev.txt
+pytest.ini
+
+# Git, OS, IDE
+.git/
+.gitignore
+.DS_Store
+.vscode/
+.idea/
+*.log
