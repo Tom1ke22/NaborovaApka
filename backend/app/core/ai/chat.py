@@ -1,8 +1,7 @@
 """Streamovaný chatbot pre uchádzačov.
 
-Nahrádza pôvodný `app.core.ai_stub`. Rozhranie ostalo rovnaké, takže
-endpoint volá stále `generate_response(...)` a dostáva asynchrónny
-generátor textových kúskov.
+Endpoint volá `generate_response(...)` a dostáva asynchrónny generátor
+textových kúskov, ktoré posiela uchádzačovi cez SSE.
 
 Keď AI nie je nakonfigurovaná alebo volanie zlyhá, chatbot nespadne.
 Namiesto toho odpovie vetou, že otázku odovzdá personalistovi. Uchádzač
@@ -154,6 +153,9 @@ async def generate_response(
             system_instruction=system_instruction,
             temperature=0.4,
             max_output_tokens=CHAT_MAX_OUTPUT_TOKENS,
+            # Nástroje nepoužívame. Bez tohto SDK pri každom volaní loguje
+            # varovanie o automatic function calling.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
         async with asyncio.timeout(CHAT_TIMEOUT_SECONDS):

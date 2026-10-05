@@ -1,7 +1,7 @@
 """Štruktúra faktov, ktoré AI vytiahne zo životopisu a z chatu.
 
 `ExtractedProfile` slúži zároveň ako JSON schéma pre štruktúrovaný výstup
-modelu (OpenAI structured outputs). Preto platí:
+modelu (Gemini `response_schema`). Preto platí:
 - žiadne zložité typy, iba str / float / int / bool / enum / vnorené modely,
 - žiadne obmedzenia typu ge/le v schéme (nie všetky podporuje strict mód),
   rozsah overujeme validátorom v Pythone,

@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     trust_proxy_headers: bool = False
     trusted_proxy_hops: int = 0
 
-    # AI (Gemini). Bez kľúča alebo s AI_ENABLED=false beží chatbot ako stub
-    # a hodnotenie uchádzačov sa preskočí (uchádzač ostane bez skóre).
+    # AI (Gemini). Bez kľúča alebo s AI_ENABLED=false chatbot odpovedá
+    # záložnou vetou a hodnotenie uchádzačov sa preskočí (uchádzač ostane bez skóre).
     ai_enabled: bool = True
     gemini_api_key: str = ""
     gemini_chat_model: str = "gemini-3.1-flash-lite"

@@ -185,6 +185,7 @@ async def extract_profile(
             max_output_tokens=EXTRACTION_MAX_OUTPUT_TOKENS,
             response_mime_type="application/json",
             response_schema=ExtractedProfile,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
         async with asyncio.timeout(EXTRACTION_TIMEOUT_SECONDS):

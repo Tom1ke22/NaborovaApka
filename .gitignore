@@ -11,13 +11,14 @@ build/
 .env
 *.env
 
-# IDE
+# IDE / nástroje
 .vscode/
 .idea/
+.claude/
+.pytest_cache/
 
 # Node
 node_modules/
-.next/
 
 # Docker volumes
 postgres_data/
@@ -27,9 +28,6 @@ frontend-new/dist/
 
 # Uploaded CV files (local storage)
 backend/uploads/
-
-# AWS CDK
-infrastructure/cdk.out/
 
 # Logs
 *.log
