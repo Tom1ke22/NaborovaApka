@@ -1,6 +1,10 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
+# SQLAlchemy si greenlet pre async režim pridá sám len na niektorých
+# platformách (x86_64, win32), nie na arm64. Bez neho spadne každý dotaz
+# chybou "the greenlet library is required", preto je tu explicitne.
+greenlet==3.5.6
 alembic==1.13.3
 asyncpg==0.29.0
 psycopg2-binary==2.9.9

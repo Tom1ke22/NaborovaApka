@@ -24,7 +24,15 @@ services:
       - db
     volumes:
       - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # --proxy-headers + --forwarded-allow-ips: uvicorn prepíše request.client.host
+    # na skutočnú IP klienta z X-Forwarded-For, ale len ak request prišiel od
+    # proxy v zozname. Bez toho sa rate limit kľúčuje na IP proxy a platí
+    # spoločne pre všetkých uchádzačov.
+    # Lokálne v Dockeri chodia requesty z privátnej siete compose, preto *.
+    # V produkcii sem patrí konkrétna adresa reverznej proxy.
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      --proxy-headers --forwarded-allow-ips=*
 
   frontend:
     build: ./frontend-new

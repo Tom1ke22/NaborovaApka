@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
 
 interface FieldProps {
-  label: string
+  label: ReactNode
   children: ReactNode
   /** Doplní červenú hviezdičku k názvu poľa. */
   required?: boolean

@@ -16,17 +16,26 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from app.core.ai import budget
 from app.core.ai.client import CHAT_TIMEOUT_SECONDS, get_client
 from app.core.ai.prompts import describe_position
 from app.core.config import settings
+from app.core.limits import (
+    CHAT_MAX_OUTPUT_TOKENS,
+    MAX_CHAT_HISTORY_MESSAGES,
+    MAX_CHAT_MESSAGE_CHARS,
+)
 
 logger = logging.getLogger(__name__)
 
 # Koľko posledných správ posielame modelu. Staršie sa zahadzujú, aby
 # dlhá konverzácia nerástla do ceny bez stropu.
-MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_MESSAGES = MAX_CHAT_HISTORY_MESSAGES
 
-MAX_USER_MESSAGE_CHARS = 2_000
+# Request s dlhšou správou endpoint odmietne (422), takže sem by sa dlhý text
+# nemal dostať. Rezanie tu ostáva ako posledná poistka pre prípad, že by sa
+# obsah do histórie dostal inou cestou.
+MAX_USER_MESSAGE_CHARS = MAX_CHAT_MESSAGE_CHARS
 
 FALLBACK_REPLY = (
     "Prepáčte, momentálne sa neviem spojiť s asistentom. "
@@ -63,7 +72,12 @@ Ako odpovedáš:
 
 
 def build_system_instruction(position: Any, requirements: Any, applicant_name: str) -> str:
-    """Zlož systémovú inštrukciu z pravidiel, údajov o pozícii a pokynov sekretárky."""
+    """Zlož systémovú inštrukciu z pravidiel, údajov o pozícii a pokynov sekretárky.
+
+    Chatbot dostáva výhradne `ai_bot_instructions` — teda to, čo firma chce
+    uchádzačom povedať. Interné poznámky pre hodnotenie (`ai_evaluation_notes`)
+    sem nesmú, uchádzač si ich vie z odpovedí vytiahnuť.
+    """
     parts = [SYSTEM_RULES, f"Meno uchádzača: {applicant_name}"]
     parts.append("Údaje o pozícii:\n" + describe_position(position, requirements))
 
@@ -119,15 +133,10 @@ async def generate_response(
     applicant_name: str,
     requirements: Any = None,
 ) -> AsyncGenerator[str, None]:
-    """Streamuj odpoveď asistenta po kúskoch textu.
-
-    `requirements` je nepovinné; ak ho endpoint načíta, chatbot vie odpovedať
-    aj na otázky typu „potrebujem zdravotný preukaz?".
-    """
     offer_interest = should_offer_interest(history)
 
     client = get_client()
-    if client is None:
+    if client is None or not budget.try_consume():
         yield FALLBACK_REPLY
         if offer_interest:
             yield " " + INTEREST_CTA
@@ -144,7 +153,7 @@ async def generate_response(
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.4,
-            max_output_tokens=600,
+            max_output_tokens=CHAT_MAX_OUTPUT_TOKENS,
         )
 
         async with asyncio.timeout(CHAT_TIMEOUT_SECONDS):

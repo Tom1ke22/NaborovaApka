@@ -11,15 +11,17 @@ Beží s vlastnou databázovou reláciou, lebo tá z requestu je v tom čase už
 zatvorená.
 
 Funkcia nikdy nevyhodí výnimku. Keď čokoľvek zlyhá, uchádzač ostane bez
-skóre a do logu sa zapíše dôvod. Prihláška sa nikdy nestratí.
+skóre, dostane `ai_status = failed` a do logu sa zapíše dôvod. Prihláška sa
+nikdy nestratí a admin vidí, že hodnotenie treba spustiť znova.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 from app.core.ai import cv_text as cv_text_module
@@ -27,9 +29,10 @@ from app.core.ai.extraction import extract_profile
 from app.core.ai.prompts import format_chat_transcript
 from app.core.ai.scoring import Requirements, compute_score
 from app.core.config import settings
+from app.core.limits import AI_EVALUATION_STALE_AFTER_SECONDS
 from app.core.storage import get_storage
-from app.db.base import AsyncSessionLocal
-from app.models.applicant import Applicant
+from app.db.base import AsyncSessionLocal, utcnow
+from app.models.applicant import AiStatusEnum, Applicant
 from app.models.chat import ChatMessage
 from app.models.position import Position
 
@@ -60,12 +63,55 @@ async def _read_cv_text(cv_storage_path: str | None) -> str:
     return ""
 
 
+def effective_ai_status(status: str, changed_at: datetime, now: datetime | None = None) -> str:
+    """Stav hodnotenia tak, ako ho má vidieť admin.
+
+    `pending` starší než AI_EVALUATION_STALE_AFTER_SECONDS je v skutočnosti
+    zlyhanie: proces, ktorý ho mal dokončiť, už nebeží a stav nikto neprepíše.
+    """
+    if status != AiStatusEnum.pending.value:
+        return status
+    now = now or utcnow()
+    if now - changed_at > timedelta(seconds=AI_EVALUATION_STALE_AFTER_SECONDS):
+        return AiStatusEnum.failed.value
+    return status
+
+
+async def _mark_failed(applicant_id: uuid.UUID) -> None:
+    """Zapíš `failed` vo vlastnej relácii.
+
+    Vlastná relácia preto, lebo tá hlavná môže byť po chybe v nepoužiteľnom
+    stave. Keď nevyjde ani toto (DB je dole), stav ostane `pending` a po
+    AI_EVALUATION_STALE_AFTER_SECONDS sa aj tak ukáže ako zlyhanie.
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(Applicant)
+                .where(Applicant.id == applicant_id)
+                .values(ai_status=AiStatusEnum.failed.value, ai_status_changed_at=utcnow())
+            )
+            await db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("Stav hodnotenia uchádzača %s sa nepodarilo uložiť", applicant_id)
+
+
 async def evaluate_applicant(applicant_id: uuid.UUID) -> None:
-    """Vyhodnoť uchádzača a ulož skóre. Chyby sa iba zalogujú."""
+    """Vyhodnoť uchádzača a ulož skóre aj stav. Chyby sa iba zalogujú.
+
+    Stav `skipped` (AI vypnutá) nastavuje už odoslanie prihlášky, ktoré túto
+    funkciu vtedy vôbec nespustí. Tu je kontrola len poistka.
+    """
     if not settings.ai_available:
         logger.info("AI je vypnutá, uchádzač %s ostáva bez skóre", applicant_id)
         return
 
+    if not await _evaluate(applicant_id):
+        await _mark_failed(applicant_id)
+
+
+async def _evaluate(applicant_id: uuid.UUID) -> bool:
+    """Samotné hodnotenie. True = skóre je uložené, False = zlyhalo."""
     try:
         async with AsyncSessionLocal() as db:
             applicant = await db.scalar(
@@ -73,7 +119,7 @@ async def evaluate_applicant(applicant_id: uuid.UUID) -> None:
             )
             if applicant is None:
                 logger.warning("Uchádzač %s sa nenašiel, hodnotenie sa preskakuje", applicant_id)
-                return
+                return False
 
             position = await db.scalar(
                 select(Position)
@@ -82,7 +128,7 @@ async def evaluate_applicant(applicant_id: uuid.UUID) -> None:
             )
             if position is None:
                 logger.warning("Pozícia uchádzača %s sa nenašla", applicant_id)
-                return
+                return False
 
             messages = (
                 await db.scalars(
@@ -107,7 +153,7 @@ async def evaluate_applicant(applicant_id: uuid.UUID) -> None:
                     "Fakty o uchádzačovi %s sa nepodarilo získať, ostáva bez skóre",
                     applicant_id,
                 )
-                return
+                return False
 
             result = compute_score(
                 Requirements.from_orm(position.requirements), profile
@@ -125,8 +171,13 @@ async def evaluate_applicant(applicant_id: uuid.UUID) -> None:
                 },
             }
 
+            applicant.ai_status = AiStatusEnum.done.value
+            applicant.ai_status_changed_at = utcnow()
+
             await db.commit()
             logger.info("Uchádzač %s vyhodnotený, skóre %s/10", applicant_id, result.score)
+            return True
 
     except Exception:  # noqa: BLE001
         logger.exception("Hodnotenie uchádzača %s zlyhalo", applicant_id)
+        return False

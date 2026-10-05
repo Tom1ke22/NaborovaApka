@@ -1,11 +1,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base
+from app.db.base import Base, utcnow
 
 
 class Company(Base):
@@ -17,7 +17,9 @@ class Company(Base):
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
     positions: Mapped[list["Position"]] = relationship(back_populates="company")
     applicants: Mapped[list["Applicant"]] = relationship(back_populates="company")

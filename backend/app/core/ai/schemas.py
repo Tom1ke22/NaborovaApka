@@ -39,11 +39,18 @@ class Fact(BaseModel):
     )
     source: Source = Field(
         default=Source.none,
-        description="Odkiaľ fakt pochádza: cv, chat, both, alebo none ak je unknown",
+        description=(
+            "Odkiaľ fakt pochádza: cv ak je napísaný v životopise, chat ak to uchádzač "
+            "iba povedal v chate, both ak je na oboch miestach, none ak je unknown. "
+            "Tvrdenie z chatu NIKDY neoznačuj ako cv"
+        ),
     )
     evidence: str | None = Field(
         default=None,
-        description="Krátka citácia (jedna veta) z CV alebo chatu, ktorá fakt dokladá; null ak nezistené",
+        description=(
+            "Doslovná citácia (jedna veta) z toho zdroja, ktorý si uviedol v source; "
+            "null ak nezistené. Pri source=cv musí byť citácia zo životopisu"
+        ),
     )
 
 
@@ -58,8 +65,16 @@ class ExperienceFact(BaseModel):
         default=None,
         description="Jedna veta: kde a ako dlho pracoval na relevantných pozíciách",
     )
-    source: Source = Field(default=Source.none, description="cv, chat, both alebo none")
-    evidence: str | None = Field(default=None, description="Krátka citácia dokladajúca prax")
+    source: Source = Field(
+        default=Source.none,
+        description=(
+            "cv ak sú roky praxe vyčítateľné zo životopisu, chat ak ich uchádzač iba "
+            "povedal, both ak oboje, none ak nezistené"
+        ),
+    )
+    evidence: str | None = Field(
+        default=None, description="Doslovná citácia dokladajúca prax z uvedeného zdroja"
+    )
 
 
 class LevelFact(BaseModel):
@@ -76,8 +91,46 @@ class LevelFact(BaseModel):
             "unknown ak pozícia túto požiadavku nemá alebo sa úroveň nedá zistiť"
         ),
     )
-    source: Source = Field(default=Source.none, description="cv, chat, both alebo none")
-    evidence: str | None = Field(default=None, description="Krátka citácia dokladajúca úroveň")
+    source: Source = Field(
+        default=Source.none,
+        description=(
+            "cv ak je úroveň uvedená v životopise, chat ak ju uchádzač iba povedal, "
+            "both ak oboje, none ak nezistené"
+        ),
+    )
+    evidence: str | None = Field(
+        default=None, description="Doslovná citácia dokladajúca úroveň z uvedeného zdroja"
+    )
+
+
+class CustomFact(BaseModel):
+    """Posúdenie jednej vlastnej požiadavky, ktorú si firma dopísala k pozícii."""
+
+    key: str = Field(
+        default="",
+        description=(
+            "Kľúč požiadavky presne tak, ako je uvedený v zadaní, napríklad custom_1. "
+            "Nevymýšľaj vlastné kľúče"
+        ),
+    )
+    value: Answer = Field(
+        default=Answer.unknown,
+        description="yes = uchádzač požiadavku spĺňa, no = výslovne nespĺňa, unknown = nedoložené",
+    )
+    source: Source = Field(
+        default=Source.none,
+        description=(
+            "cv ak je to v životopise, chat ak to uchádzač iba povedal, both ak oboje, "
+            "none ak je unknown"
+        ),
+    )
+    evidence: str | None = Field(
+        default=None,
+        description=(
+            "Doslovná citácia z uvedeného zdroja, ktorá posúdenie dokladá; "
+            "null ak nezistené"
+        ),
+    )
 
 
 class ExtractedProfile(BaseModel):
@@ -96,18 +149,26 @@ class ExtractedProfile(BaseModel):
         default_factory=LevelFact,
         description="Cudzie jazyky a úrovne, napr. 'angličtina B2, nemčina základy'",
     )
+    custom_requirements: list[CustomFact] = Field(
+        default_factory=list,
+        description=(
+            "Posúdenie vlastných požiadaviek pozície — jeden záznam ku každému kľúču "
+            "custom_N zo zadania, v rovnakom poradí. Prázdny zoznam, ak pozícia "
+            "žiadne vlastné požiadavky nemá"
+        ),
+    )
     custom_instructions_findings: str | None = Field(
         default=None,
         description=(
-            "Čo sa zistilo k vlastným inštrukciám sekretárky (ak pozícia nejaké má), "
-            "jedna až dve vety; null ak inštrukcie nie sú alebo sa nič nezistilo"
+            "Čo sa zistilo k interným poznámkam firmy k hodnoteniu (ak pozícia nejaké má), "
+            "jedna až dve vety; null ak poznámky nie sú alebo sa nič nezistilo"
         ),
     )
     overall_fit: int = Field(
         default=5,
         description=(
             "Celkový odhad vhodnosti uchádzača pre pozíciu na škále 1 (nevhodný) až 10 (ideálny), "
-            "berie do úvahy kvalitu praxe a vlastné inštrukcie sekretárky"
+            "berie do úvahy kvalitu praxe a interné poznámky firmy k hodnoteniu"
         ),
     )
     summary: str | None = Field(

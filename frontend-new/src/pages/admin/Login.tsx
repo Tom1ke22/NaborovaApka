@@ -33,13 +33,13 @@ export default function AdminLogin() {
 
       <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center">
         <div className="mb-7 flex justify-center">
-          <BrandLogo subtitle="Administrácia" />
+          <BrandLogo />
         </div>
 
         <Card className="overflow-hidden animate-rise">
           <div className="bg-brand-gradient px-6 py-6 text-center">
             <h1 className="text-lg font-bold text-white">Prihlásenie</h1>
-            <p className="mt-1 text-xs text-white/70">Prístup do správy pozícií a záujemcov</p>
+            <p className="mt-1 text-xs text-white/70">Prístup k pracovným ponukám a záujemcom</p>
           </div>
 
           <CardContent className="p-6">

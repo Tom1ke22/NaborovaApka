@@ -1,13 +1,26 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { api } from '@/lib/api'
+import { type ChatClaim, saveChatClaim } from '@/lib/chatSession'
 import { type ChatMessage } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
-import { ArrowLeft, Send, User, Bot, Sparkles, MessageSquare } from 'lucide-react'
+import { ArrowLeft, Send, User, Bot, MessageSquare, TriangleAlert } from 'lucide-react'
 
-/** Návrhy otázok — iba predvyplnia pole, odoslanie ostáva na uchádzačovi. */
+/** Strop na dĺžku správy. Musí sedieť s MAX_CHAT_MESSAGE_CHARS na backende. */
+const MAX_MESSAGE_CHARS = 2000
+
+/** Server odmietol správu kvôli rate limitu (HTTP 429). */
+class RateLimited extends Error {}
+
+/** Pozícia bola počas rozhovoru uzavretá (HTTP 410). `message` je text zo servera. */
+class PositionClosed extends Error {}
+
+const POSITION_CLOSED_FALLBACK =
+  'Táto pozícia bola medzitým uzavretá, preto už nie je možné pokračovať v rozhovore.'
+
+/** Návrhy otázok — kliknutie ich rovno odošle, uchádzač nemusí nič potvrdzovať. */
 const SUGGESTIONS = [
   'Aká je mzda a kedy je výplata?',
   'Ako vyzerá pracovný čas?',
@@ -16,41 +29,41 @@ const SUGGESTIONS = [
 
 export default function Chat() {
   const { slug, positionId } = useParams<{ slug: string; positionId: string }>()
-  const navigate = useNavigate()
 
-  const [name, setName] = useState('')
-  const [nameSubmitted, setNameSubmitted] = useState(false)
-  const [starting, setStarting] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [claim, setClaim] = useState<ChatClaim | null>(null)
+  const [startFailed, setStartFailed] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  // Pozícia sa uzavrela počas rozhovoru — chat končí, prihlásiť sa už nedá.
+  const [closed, setClosed] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Relácia sa otvára hneď po príchode. Bez zámky by ju React v striktnom
+  // režime (dvojité spustenie efektu) založil dvakrát.
+  const startedRef = useRef(false)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streaming])
 
-  async function startChat() {
-    if (!name.trim() || starting) return
-    setStarting(true)
-    try {
-      const res = await api.post(`/${slug}/chat/start`, {
-        position_id: positionId,
-        applicant_name: name.trim(),
+  useEffect(() => {
+    if (startedRef.current) return
+    startedRef.current = true
+    api
+      .post(`/${slug}/chat/start`, { position_id: positionId })
+      .then((res) => {
+        const opened = { session_id: res.data.session_id, claim_token: res.data.claim_token }
+        setClaim(opened)
+        saveChatClaim(slug!, positionId!, opened)
+        setMessages([{ role: 'assistant', content: res.data.greeting }])
       })
-      setSessionId(res.data.session_id)
-      setNameSubmitted(true)
-      setMessages([{ role: 'assistant', content: res.data.greeting }])
-    } finally {
-      setStarting(false)
-    }
-  }
+      .catch(() => setStartFailed(true))
+  }, [slug, positionId])
 
-  async function sendMessage() {
-    if (!input.trim() || streaming || !sessionId) return
-    const userMsg = input.trim()
+  async function sendMessage(text: string) {
+    const userMsg = text.trim().slice(0, MAX_MESSAGE_CHARS)
+    if (!userMsg || streaming || !claim || closed) return
     setInput('')
     setMessages((prev) => [...prev, { role: 'user', content: userMsg }])
     setStreaming(true)
@@ -62,9 +75,19 @@ export default function Chat() {
       const response = await fetch(`/api/${slug}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, message: userMsg }),
+        body: JSON.stringify({ ...claim, message: userMsg }),
       })
 
+      // 429 = príliš veľa správ za minútu (limit na session aj na IP).
+      // Uchádzač musí vedieť, že má len počkať, nie že appka je pokazená.
+      if (response.status === 429) throw new RateLimited()
+      if (response.status === 410) {
+        const detail = await response
+          .json()
+          .then((body: { detail?: unknown }) => body.detail)
+          .catch(() => null)
+        throw new PositionClosed(typeof detail === 'string' ? detail : POSITION_CLOSED_FALLBACK)
+      }
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
 
       const reader = response.body.getReader()
@@ -108,13 +131,17 @@ export default function Chat() {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof PositionClosed) setClosed(true)
+      const content =
+        err instanceof PositionClosed
+          ? err.message
+          : err instanceof RateLimited
+            ? 'Poslali ste veľa správ za krátky čas. Skúste to, prosím, o minútu.'
+            : 'Nastala chyba. Skúste znova.'
       setMessages((prev) => {
         const updated = [...prev]
-        updated[updated.length - 1] = {
-          ...updated[updated.length - 1],
-          content: 'Nastala chyba. Skúste znova.',
-        }
+        updated[updated.length - 1] = { ...updated[updated.length - 1], content }
         return updated
       })
     } finally {
@@ -123,58 +150,41 @@ export default function Chat() {
   }
 
   /* ---------------------------------------------------------------------- */
-  /* Úvodná obrazovka — meno pred začiatkom konverzácie                      */
+  /* Otváranie relácie — uchádzač nič nevypĺňa, chat sa spustí sám           */
   /* ---------------------------------------------------------------------- */
 
-  if (!nameSubmitted) {
+  if (!claim) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas px-4 py-10">
         <div className="w-full max-w-md">
-          <button
-            onClick={() => navigate(`/${slug}/${positionId}`)}
+          <Link
+            to={`/${slug}/${positionId}`}
             className="group mb-5 inline-flex items-center gap-2 text-sm font-medium text-ink-soft transition-colors hover:text-brand-700"
           >
             <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
             Späť na pozíciu
-          </button>
+          </Link>
 
           <Card className="overflow-hidden animate-rise">
-            <div className="flex flex-col items-center bg-brand-gradient px-6 py-8 text-center">
-              <span className="grid h-14 w-14 place-items-center rounded-2xl bg-white/15 text-white ring-1 ring-inset ring-white/25">
-                <Bot className="h-7 w-7" />
-              </span>
-              <h2 className="mt-4 text-xl font-bold text-white">Ako sa voláte?</h2>
-              <p className="mt-1.5 text-sm text-white/75">
-                Aby vás asistent mohol osloviť menom.
-              </p>
-            </div>
-
-            <CardContent className="p-6">
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <Input
-                  placeholder="Meno a priezvisko"
-                  value={name}
-                  onChange={(e) => {
-                    const filtered = e.target.value.replace(/[^\p{L}\s\-']/gu, '')
-                    setName(
-                      filtered.replace(
-                        /(^|[\s-])(\p{L})/gu,
-                        (_, sep, char) => sep + char.toUpperCase(),
-                      ),
-                    )
-                  }}
-                  onKeyDown={(e) => e.key === 'Enter' && startChat()}
-                  autoFocus
-                />
-                <Button onClick={startChat} disabled={!name.trim() || starting} className="sm:w-auto">
-                  {starting ? 'Otvára sa…' : 'Začať'}
-                </Button>
-              </div>
-
-              <p className="mt-4 flex items-start gap-2 rounded-xl bg-accent-50 px-3.5 py-3 text-xs leading-relaxed text-accent-800 ring-1 ring-inset ring-accent-100">
-                <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                Asistent pozná detaily tejto pozície a odpovie vám okamžite.
-              </p>
+            <CardContent className="flex flex-col items-center gap-4 p-10 text-center">
+              {startFailed ? (
+                <>
+                  <span className="grid h-14 w-14 place-items-center rounded-2xl bg-rose-50 text-rose-500 ring-1 ring-inset ring-rose-100">
+                    <TriangleAlert className="h-7 w-7" />
+                  </span>
+                  <p className="text-sm text-ink-soft">
+                    Asistenta sa nepodarilo otvoriť. Skúste to prosím znova.
+                  </p>
+                  <Button onClick={() => window.location.reload()}>Skúsiť znova</Button>
+                </>
+              ) : (
+                <>
+                  <span className="grid h-14 w-14 place-items-center rounded-2xl bg-brand-gradient text-white shadow-brand">
+                    <Bot className="h-7 w-7" />
+                  </span>
+                  <p className="text-sm text-ink-soft">Otvárame asistenta…</p>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -186,20 +196,20 @@ export default function Chat() {
   /* Konverzácia                                                             */
   /* ---------------------------------------------------------------------- */
 
-  const showSuggestions = messages.length === 1 && !streaming
+  const showSuggestions = messages.length === 1 && !streaming && !closed
 
   return (
     <div className="flex h-dvh flex-col bg-canvas">
       {/* Hlavička konverzácie */}
       <header className="shrink-0 bg-brand-gradient">
         <div className="mx-auto flex h-16 max-w-3xl items-center gap-3 px-4">
-          <button
-            onClick={() => navigate(`/${slug}/${positionId}`)}
+          <Link
+            to={`/${slug}/${positionId}`}
             aria-label="Späť na pozíciu"
             className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white/75 transition-colors hover:bg-white/15 hover:text-white"
           >
             <ArrowLeft className="h-5 w-5" />
-          </button>
+          </Link>
 
           <span className="relative grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/15 text-white ring-1 ring-inset ring-white/25">
             <Bot className="h-5 w-5" />
@@ -211,15 +221,17 @@ export default function Chat() {
             <p className="text-xs text-white/65">{streaming ? 'Píše…' : 'Online'}</p>
           </div>
 
-          <Button
-            size="sm"
-            variant="accent"
-            className="ml-auto bg-white text-brand-700 shadow-none hover:bg-white/90"
-            onClick={() => navigate(`/${slug}/${positionId}/apply?session=${sessionId}`)}
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            Mám záujem
-          </Button>
+          {!closed && (
+            <Button
+              size="sm"
+              variant="accent"
+              className="ml-auto bg-white text-brand-700 shadow-none hover:bg-white/90"
+              to={`/${slug}/${positionId}/apply`}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              Mám záujem
+            </Button>
+          )}
         </div>
       </header>
 
@@ -281,10 +293,7 @@ export default function Chat() {
               {SUGGESTIONS.map((s) => (
                 <button
                   key={s}
-                  onClick={() => {
-                    setInput(s)
-                    inputRef.current?.focus()
-                  }}
+                  onClick={() => sendMessage(s)}
                   className="rounded-full border border-line bg-white px-3.5 py-2 text-xs font-medium text-ink-soft shadow-xs transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
                 >
                   {s}
@@ -302,16 +311,17 @@ export default function Chat() {
         <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3">
           <Input
             ref={inputRef}
-            placeholder="Napíšte správu…"
+            placeholder={closed ? 'Rozhovor je ukončený' : 'Napíšte správu…'}
             value={input}
+            maxLength={MAX_MESSAGE_CHARS}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-            disabled={streaming}
+            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage(input)}
+            disabled={streaming || closed}
             className="h-12 rounded-2xl"
           />
           <Button
-            onClick={sendMessage}
-            disabled={streaming || !input.trim()}
+            onClick={() => sendMessage(input)}
+            disabled={streaming || closed || !input.trim()}
             size="icon"
             aria-label="Odoslať správu"
             className="h-12 w-12 rounded-2xl"

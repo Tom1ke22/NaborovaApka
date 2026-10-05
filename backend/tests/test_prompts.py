@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from app.core.ai.prompts import (
     CV_CLOSE,
     CV_OPEN,
+    describe_custom_requirements,
     describe_position,
     describe_requirements,
     format_chat_transcript,
@@ -47,6 +48,7 @@ def requirements(**overrides) -> SimpleNamespace:
         education_level=None,
         slovak_language_level=None,
         foreign_language_level=None,
+        custom_requirements=[],
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -121,6 +123,25 @@ def test_requirements_are_appended_to_position_description():
     text = describe_position(position(), requirements(health_certificate_required=True))
     assert "Požiadavky na uchádzača:" in text
     assert "  - zdravotný preukaz pre prácu s potravinami" in text
+
+
+def test_custom_requirements_are_listed_without_keys_for_the_chatbot():
+    req = requirements(custom_requirements=[{"label": "vodičský preukaz B"}])
+    assert describe_requirements(req) == ["vodičský preukaz B"]
+    assert "custom_1" not in describe_position(position(), req)
+
+
+def test_custom_requirements_get_keys_for_extraction():
+    text = describe_custom_requirements(
+        requirements(custom_requirements=[{"label": "vodičák B"}, {"label": "práca v noci"}])
+    )
+    assert "custom_1: vodičák B" in text
+    assert "custom_2: práca v noci" in text
+
+
+def test_no_custom_requirements_gives_empty_string():
+    assert describe_custom_requirements(requirements()) == ""
+    assert describe_custom_requirements(None) == ""
 
 
 # --------------------------------------------------------------------------- #

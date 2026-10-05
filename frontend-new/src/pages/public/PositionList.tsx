@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { type PositionListItem, CONTRACT_TYPE_LABELS, SALARY_PERIOD_LABELS } from '@/types'
 import { Card, CardContent } from '@/components/ui/card'
@@ -23,7 +23,6 @@ import {
 
 export default function PositionList() {
   const { slug } = useParams<{ slug: string }>()
-  const navigate = useNavigate()
   const [positions, setPositions] = useState<PositionListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -117,7 +116,7 @@ export default function PositionList() {
                 interactive
                 className="stripe-brand animate-rise"
                 style={{ animationDelay: `${Math.min(i, 6) * 55}ms` }}
-                onClick={() => navigate(`/${slug}/${pos.id}`)}
+                to={`/${slug}/${pos.id}`}
               >
                 <CardContent className="p-5 sm:p-6">
                   <div className="flex items-start gap-4">

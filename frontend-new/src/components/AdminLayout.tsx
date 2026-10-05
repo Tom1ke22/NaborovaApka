@@ -5,7 +5,7 @@
  * a zoznamom záujemcov sa dalo preklikať len cez tlačidlo v karte pozície.
  * Tu je navigácia stála, takže obe sekcie sú vždy na jedno kliknutie.
  */
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { ArrowLeft, Briefcase, LogOut, Users } from 'lucide-react'
@@ -43,14 +43,13 @@ export function AdminLayout({
   width = 'wide',
 }: AdminLayoutProps) {
   const { logout } = useAuth()
-  const navigate = useNavigate()
 
   return (
     <div className="min-h-screen bg-canvas">
       {/* Horný tmavý pruh so značkou a navigáciou */}
       <header className="bg-brand-gradient">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 sm:px-6">
-          <BrandLogo subtitle="Administrácia" onDark />
+          <BrandLogo onDark />
 
           <nav className="ml-auto hidden items-center gap-1 sm:flex">
             {NAV.map(({ to, label, icon: Icon }) => (
@@ -116,7 +115,7 @@ export function AdminLayout({
               <Button
                 variant="outline"
                 size="icon"
-                onClick={() => navigate(backTo)}
+                to={backTo}
                 aria-label="Späť"
                 className="h-9 w-9"
               >

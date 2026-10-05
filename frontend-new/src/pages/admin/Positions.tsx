@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { type Position, CONTRACT_TYPE_LABELS, SALARY_PERIOD_LABELS } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -31,7 +30,6 @@ const TABS: { key: Tab; label: string }[] = [
 ]
 
 export default function AdminPositions() {
-  const navigate = useNavigate()
   const [positions, setPositions] = useState<Position[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -100,8 +98,7 @@ export default function AdminPositions() {
 
   return (
     <AdminLayout
-      title="Správa pozícií"
-      subtitle="Vytvárajte a spravujte pracovné ponuky vašej firmy"
+      title="Pracovné ponuky"
       actions={
         <Button onClick={openCreate}>
           <Plus className="h-4 w-4" />
@@ -215,7 +212,7 @@ export default function AdminPositions() {
                         <Button
                           variant="soft"
                           size="sm"
-                          onClick={() => navigate(`/admin/applicants?position=${pos.id}`)}
+                          to={`/admin/applicants?position=${pos.id}`}
                         >
                           <Users className="h-3.5 w-3.5" />
                           Záujemcovia

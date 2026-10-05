@@ -1,10 +1,19 @@
+import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class StoredFile:
+    path: str              # rovnaký tvar ako `applicants.cv_storage_path`
+    modified_at: datetime  # UTC
 
 
 class StorageBackend(ABC):
@@ -16,12 +25,24 @@ class StorageBackend(ABC):
     async def load(self, storage_path: str) -> bytes | None:
         """Načítaj súbor späť. None ak neexistuje alebo sa nedá prečítať.
 
-        Potrebuje to AI hodnotenie, ktoré si z uloženého CV vytiahne text.
+        Potrebuje to AI hodnotenie (text z CV) aj stiahnutie CV adminom.
         """
 
     @abstractmethod
-    async def generate_signed_url(self, storage_path: str) -> str | None:
-        """Vráť dočasný download URL, alebo None ak súbor servujeme cez naše API."""
+    async def exists(self, storage_path: str) -> bool:
+        """Je súbor v úložisku? Admin tak dostane jasnú hlášku namiesto „skúste znova"."""
+
+    @abstractmethod
+    async def delete(self, storage_path: str) -> None:
+        """Zmaž súbor. Neexistujúci súbor nie je chyba (výmaz je idempotentný)."""
+
+    @abstractmethod
+    async def list_files(self) -> list[StoredFile]:
+        """Všetky uložené CV — pre úklid súborov bez uchádzača."""
+
+    # Zámerne tu nie je podpísaný URL na stiahnutie. CV ide adminovi vždy cez
+    # autentifikovaný endpoint /admin/applicants/{id}/cv/download — podpísaný
+    # URL by stiahol CV hocikto, kto ho získa (logy, história, preposlaný link).
 
 
 class LocalStorage(StorageBackend):
@@ -42,9 +63,27 @@ class LocalStorage(StorageBackend):
             logger.warning("CV sa nedá prečítať z disku: %s", storage_path)
             return None
 
-    async def generate_signed_url(self, storage_path: str) -> str | None:
-        # Lokálne súbory servujeme cez /cv/download endpoint
-        return None
+    async def exists(self, storage_path: str) -> bool:
+        return os.path.isfile(storage_path)
+
+    async def delete(self, storage_path: str) -> None:
+        try:
+            os.remove(storage_path)
+        except FileNotFoundError:
+            pass
+
+    async def list_files(self) -> list[StoredFile]:
+        if not os.path.isdir(self._base_dir):
+            return []
+        files = []
+        with os.scandir(self._base_dir) as entries:
+            for entry in entries:
+                if entry.is_file():
+                    files.append(StoredFile(
+                        path=f"{self._base_dir}/{entry.name}",
+                        modified_at=datetime.fromtimestamp(entry.stat().st_mtime, timezone.utc),
+                    ))
+        return files
 
 
 class GCSStorage(StorageBackend):
@@ -60,8 +99,6 @@ class GCSStorage(StorageBackend):
         return object_name
 
     async def load(self, storage_path: str) -> bytes | None:
-        import asyncio
-
         def _download() -> bytes | None:
             blob = self._bucket.blob(storage_path)
             if not blob.exists():
@@ -75,13 +112,30 @@ class GCSStorage(StorageBackend):
             logger.warning("CV sa nedá stiahnuť z GCS: %s", storage_path, exc_info=True)
             return None
 
-    async def generate_signed_url(self, storage_path: str) -> str | None:
-        import datetime
-        blob = self._bucket.blob(storage_path)
-        return blob.generate_signed_url(
-            expiration=datetime.timedelta(hours=1),
-            method="GET",
-        )
+    # Knižnica GCS je synchrónna, všetko ide mimo event loop.
+
+    async def exists(self, storage_path: str) -> bool:
+        return await asyncio.to_thread(self._bucket.blob(storage_path).exists)
+
+    async def delete(self, storage_path: str) -> None:
+        from google.api_core.exceptions import NotFound  # type: ignore[import]
+
+        def _delete() -> None:
+            try:
+                self._bucket.blob(storage_path).delete()
+            except NotFound:
+                pass
+
+        await asyncio.to_thread(_delete)
+
+    async def list_files(self) -> list[StoredFile]:
+        def _list() -> list[StoredFile]:
+            return [
+                StoredFile(path=blob.name, modified_at=blob.updated)
+                for blob in self._client.list_blobs(self._bucket, prefix="cvs/")
+            ]
+
+        return await asyncio.to_thread(_list)
 
 
 def get_storage() -> StorageBackend:

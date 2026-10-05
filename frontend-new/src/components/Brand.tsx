@@ -41,7 +41,7 @@ export function BrandLogo({
             onDark ? 'text-white' : 'text-ink',
           )}
         >
-          Náborová<span className={onDark ? 'text-accent-300' : 'text-brand-600'}>Apka</span>
+          Náborová <span className={onDark ? 'text-accent-300' : 'text-brand-600'}>Aplikácia</span>
         </span>
         {subtitle && (
           <span

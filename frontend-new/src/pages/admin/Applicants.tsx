@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -8,10 +8,10 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { SectionLoader } from '@/components/ui/spinner'
 import { AdminLayout } from '@/components/AdminLayout'
 import { ScoreRing } from '@/components/ScoreRing'
-import { scoreLabel } from '@/lib/score'
+import { type AiStatus, scoreLabel } from '@/lib/score'
 import type { Position } from '@/types'
 import { cn, formatDateShort } from '@/lib/utils'
-import { Search, Inbox, ChevronRight, X, ArrowUpDown, Mail, Phone } from 'lucide-react'
+import { Search, Inbox, ChevronRight, X, ArrowUpDown, Mail, Phone, Briefcase } from 'lucide-react'
 
 interface ApplicantRow {
   id: string
@@ -20,8 +20,11 @@ interface ApplicantRow {
   email: string
   phone: string
   ai_score: number | null
+  ai_status: AiStatus
+  other_applications: number
   submitted_at: string
   position_id: string
+  position_title: string
 }
 
 type Sort = 'newest' | 'score'
@@ -31,7 +34,6 @@ function initials(first: string, last: string) {
 }
 
 export default function AdminApplicants() {
-  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const positionId = searchParams.get('position')
 
@@ -69,7 +71,7 @@ export default function AdminApplicants() {
     const q = query.trim().toLowerCase()
     const filtered = q
       ? applicants.filter((a) =>
-          [`${a.first_name} ${a.last_name}`, a.email, a.phone].some((f) =>
+          [`${a.first_name} ${a.last_name}`, a.email, a.phone, a.position_title].some((f) =>
             f?.toLowerCase().includes(q),
           ),
         )
@@ -91,13 +93,13 @@ export default function AdminApplicants() {
         positionTitle ? (
           <span className="flex items-center gap-2">
             <span className="truncate">Filtrované na: {positionTitle}</span>
-            <button
-              onClick={() => navigate('/admin/applicants')}
+            <Link
+              to="/admin/applicants"
               className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700 ring-1 ring-inset ring-brand-100 transition-colors hover:bg-brand-100"
             >
               <X className="h-3 w-3" />
               Zrušiť
-            </button>
+            </Link>
           </span>
         ) : (
           'Všetci uchádzači naprieč pozíciami'
@@ -135,7 +137,7 @@ export default function AdminApplicants() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Hľadať podľa mena, emailu alebo telefónu…"
+                placeholder="Hľadať podľa mena, emailu, telefónu alebo pozície…"
                 className="pl-10"
                 aria-label="Hľadať v záujemcoch"
               />
@@ -166,11 +168,7 @@ export default function AdminApplicants() {
                   style={{ animationDelay: `${Math.min(i, 6) * 45}ms` }}
                   // Filter nesieme so sebou, nech sa zo šípky v detaile
                   // vrátime naspäť do zoznamu pre danú pozíciu.
-                  onClick={() =>
-                    navigate(
-                      `/admin/applicants/${app.id}${positionId ? `?position=${positionId}` : ''}`,
-                    )
-                  }
+                  to={`/admin/applicants/${app.id}${positionId ? `?position=${positionId}` : ''}`}
                 >
                   <CardContent className="flex items-center gap-4 p-4 sm:p-5">
                     <span
@@ -183,9 +181,28 @@ export default function AdminApplicants() {
                     </span>
 
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-semibold text-ink">
-                        {app.first_name} {app.last_name}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <p className="truncate font-semibold text-ink">
+                          {app.first_name} {app.last_name}
+                        </p>
+                        {/* Bez filtra na pozíciu je zoznam naprieč všetkými — inak
+                            nebolo vidieť, kam sa kto vlastne hlási. S filtrom je to
+                            už jasné z podnadpisu stránky, tak sa tu neopakuje. */}
+                        {!positionId && (
+                          <Badge variant="outline" className="gap-1">
+                            <Briefcase className="h-3 w-3" />
+                            {app.position_title}
+                          </Badge>
+                        )}
+                        {app.other_applications > 0 && (
+                          <Badge
+                            variant="warning"
+                            title={`Ďalšie prihlášky z tohto e-mailu: ${app.other_applications}`}
+                          >
+                            Opakovaná prihláška
+                          </Badge>
+                        )}
+                      </div>
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-ink-faint">
                         <span className="inline-flex items-center gap-1 truncate">
                           <Mail className="h-3 w-3 shrink-0" />
@@ -199,13 +216,13 @@ export default function AdminApplicants() {
                     </div>
 
                     <div className="hidden shrink-0 text-right sm:block">
-                      <p className="text-xs font-medium text-ink-soft">{scoreLabel(app.ai_score)}</p>
+                      <p className="text-xs font-medium text-ink-soft">{scoreLabel(app.ai_score, app.ai_status)}</p>
                       <p className="mt-0.5 text-xs text-ink-faint">
                         {formatDateShort(app.submitted_at)}
                       </p>
                     </div>
 
-                    <ScoreRing score={app.ai_score} size="sm" />
+                    <ScoreRing score={app.ai_score} status={app.ai_status} size="sm" />
 
                     <ChevronRight className="hidden h-5 w-5 shrink-0 text-ink-faint sm:block" />
                   </CardContent>

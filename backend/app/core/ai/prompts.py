@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.ai.scoring import custom_key, custom_requirement_labels
+
 CONTRACT_LABELS: dict[str, str] = {
     "dohoda_o_pracovnej_cinnosti": "dohoda o pracovnej činnosti",
     "kratsi_pracovny_cas": "kratší pracovný čas",
@@ -114,7 +116,27 @@ def describe_requirements(requirements: Any) -> list[str]:
     if getattr(requirements, "foreign_language_level", None):
         lines.append(f"cudzí jazyk: {requirements.foreign_language_level}")
 
+    lines.extend(custom_requirement_labels(getattr(requirements, "custom_requirements", None)))
+
     return lines
+
+
+def describe_custom_requirements(requirements: Any) -> str:
+    """Vypíš vlastné požiadavky aj s kľúčmi — pre extrakciu, nie pre chatbota.
+
+    Kľúče (`custom_1`, `custom_2`, …) potrebuje model preto, aby sa jeho
+    odpoveď dala spárovať so správnou požiadavkou. Chatbot ich nedostáva,
+    nech ich uchádzačovi nezačne citovať.
+    """
+    labels = custom_requirement_labels(getattr(requirements, "custom_requirements", None))
+    if not labels:
+        return ""
+
+    rows = "\n".join(f"{custom_key(i)}: {label}" for i, label in enumerate(labels))
+    return (
+        "Vlastné požiadavky tejto pozície. Ku každému kľúču vyplň jeden záznam "
+        "v poli custom_requirements a použi presne tento kľúč:\n" + rows
+    )
 
 
 def format_chat_transcript(history: list[dict]) -> str:

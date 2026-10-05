@@ -96,7 +96,7 @@ export default function Landing() {
 
       <footer className="border-t border-line bg-white/60">
         <div className="mx-auto max-w-5xl px-4 py-6 text-center text-xs text-ink-faint sm:px-6">
-          © {new Date().getFullYear()} NáborováApka
+          © {new Date().getFullYear()} Náborová Aplikácia · <Link to="/admin/login">Pre firmy</Link>
         </div>
       </footer>
     </div>

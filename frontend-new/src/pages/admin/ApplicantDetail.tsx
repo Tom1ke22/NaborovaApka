@@ -1,18 +1,29 @@
-import { useEffect, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { DetailRow } from '@/components/ui/info-chip'
-import { PageLoader } from '@/components/ui/spinner'
+import { PageLoader, Spinner } from '@/components/ui/spinner'
 import { AdminLayout } from '@/components/AdminLayout'
 import { ScoreRing } from '@/components/ScoreRing'
-import { scoreLabel } from '@/lib/score'
 import { RequirementsCard } from '@/components/AiEvaluation'
 import type { AiEvaluation } from '@/types'
+import type { AiStatus } from '@/lib/score'
 import { formatDateTime } from '@/lib/utils'
-import { Download, MessageSquare, Mail, Phone, CalendarClock, Sparkles, Bot, User } from 'lucide-react'
+import {
+  Download,
+  MessageSquare,
+  Mail,
+  Phone,
+  CalendarClock,
+  Bot,
+  User,
+  RotateCcw,
+  Trash2,
+  Copy,
+} from 'lucide-react'
 
 interface ApplicantDetail {
   id: string
@@ -22,10 +33,23 @@ interface ApplicantDetail {
   phone: string
   cv_storage_path: string | null
   ai_score: number | null
+  ai_status: AiStatus
+  other_applications: number
   ai_score_reasoning: string | null
   qualification_answers: AiEvaluation
   submitted_at: string
   position_id: string
+}
+
+/** Ako často sa pýtame na výsledok, kým hodnotenie beží. */
+const AI_POLL_MS = 4000
+
+/** Text pod skóre, keď zdôvodnenie ešte (alebo vôbec) nie je. */
+const AI_STATUS_TEXT: Record<AiStatus, string> = {
+  pending: 'Hodnotenie prebieha. Výsledok sa zobrazí automaticky.',
+  done: 'Model neuviedol zdôvodnenie.',
+  failed: 'AI hodnotenie zlyhalo alebo trvalo príliš dlho. Môžete ho spustiť znova.',
+  skipped: 'AI hodnotenie bolo pri odoslaní prihlášky vypnuté.',
 }
 
 interface ChatMsg {
@@ -34,9 +58,51 @@ interface ChatMsg {
   created_at: string
 }
 
+/**
+ * Text chyby z backendu (`detail`), aj keď request čakal blob.
+ *
+ * Napr. 410 „súbor v úložisku chýba" má adminovi povedať presne to, nie
+ * všeobecné „skúste znova" — opakovanie by nepomohlo.
+ */
+async function backendDetail(err: unknown): Promise<string | null> {
+  const data = (err as { response?: { data?: unknown } }).response?.data
+  try {
+    const parsed = data instanceof Blob ? JSON.parse(await data.text()) : data
+    const detail = (parsed as { detail?: unknown } | undefined)?.detail
+    return typeof detail === 'string' ? detail : null
+  } catch {
+    return null
+  }
+}
+
+/** Klik na dočasný odkaz — na rozdiel od window.open ho blokovač popupov nerieši. */
+function triggerDownload(url: string, filename: string) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+/** Meno súboru, ktoré posiela backend v Content-Disposition. */
+function fileNameFromHeaders(headers: unknown): string | null {
+  const disposition = (headers as Record<string, string> | undefined)?.['content-disposition']
+  const match = disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+/** Záloha, keď sa hlavička Content-Disposition nedá prečítať. */
+function cvFileName(applicant: ApplicantDetail): string {
+  const ext = applicant.cv_storage_path?.match(/\.[a-z0-9]+$/i)?.[0] ?? ''
+  return `cv_${applicant.last_name}_${applicant.first_name}${ext}`
+}
+
 export default function AdminApplicantDetail() {
   const { id } = useParams<{ id: string }>()
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
 
   // Odkiaľ sme prišli: zo zoznamu filtrovaného na pozíciu, alebo zo všetkých.
   const positionId = searchParams.get('position')
@@ -45,6 +111,21 @@ export default function AdminApplicantDetail() {
   const [applicant, setApplicant] = useState<ApplicantDetail | null>(null)
   const [chat, setChat] = useState<ChatMsg[]>([])
   const [loading, setLoading] = useState(true)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [retrying, setRetrying] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [retryError, setRetryError] = useState<string | null>(null)
+
+  const reloadApplicant = useCallback(
+    () =>
+      api
+        .get(`/admin/applicants/${id}`)
+        .then((res) => setApplicant(res.data))
+        .catch(() => {}),
+    [id],
+  )
 
   useEffect(() => {
     Promise.all([
@@ -58,9 +139,86 @@ export default function AdminApplicantDetail() {
       .finally(() => setLoading(false))
   }, [id])
 
+  // Kým hodnotenie beží, pýtame sa na výsledok. Backend „visiace" hodnotenie
+  // po čase sám vráti ako failed, takže sa to nezacyklí navždy.
+  const aiPending = applicant?.ai_status === 'pending'
+  useEffect(() => {
+    if (!aiPending) return
+    const timer = setInterval(reloadApplicant, AI_POLL_MS)
+    return () => clearInterval(timer)
+  }, [aiPending, reloadApplicant])
+
+  async function retryEvaluation() {
+    if (retrying) return
+    setRetrying(true)
+    setRetryError(null)
+    try {
+      await api.post(`/admin/applicants/${id}/evaluate`)
+      await reloadApplicant()
+    } catch (err) {
+      const status = (err as { response?: { status?: number } }).response?.status
+      setRetryError(
+        status === 503
+          ? 'AI nie je nakonfigurovaná, hodnotenie sa nedá spustiť.'
+          : 'Hodnotenie sa nepodarilo spustiť. Skúste to prosím znova.',
+      )
+    } finally {
+      setRetrying(false)
+    }
+  }
+
+  /**
+   * Stiahnutie životopisu.
+   *
+   * Náš `/cv/download` endpoint je chránený Bearer tokenom, ktorý pridáva až
+   * axios interceptor — `window.open` by hlavičku neposlal a prehliadač by
+   * dostal 403. Preto si súbor stiahneme requestom ako blob a až hotové dáta
+   * podstrčíme prehliadaču. Backend vracia vždy tento endpoint, aj pri GCS —
+   * podpísaný URL by stiahol CV hocikto, kto ho získa.
+   */
   async function downloadCv() {
-    const res = await api.get(`/admin/applicants/${id}/cv`)
-    window.open(res.data.url, '_blank')
+    if (!applicant || downloading) return
+
+    setDownloading(true)
+    setDownloadError(null)
+    try {
+      const { data } = await api.get<{ url: string }>(`/admin/applicants/${id}/cv`)
+
+      // baseURL vypíname — backend vracia cestu aj s prefixom /api.
+      const file = await api.get<Blob>(data.url, { baseURL: '', responseType: 'blob' })
+      const objectUrl = URL.createObjectURL(file.data)
+      triggerDownload(objectUrl, fileNameFromHeaders(file.headers) ?? cvFileName(applicant))
+      // Až keď prehliadač sťahovanie rozbehne — okamžité revoke ho vie zabiť.
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+    } catch (err) {
+      setDownloadError(
+        (await backendDetail(err)) ?? 'Životopis sa nepodarilo stiahnuť. Skúste to prosím znova.',
+      )
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  /** Natrvalo zmazať uchádzača aj s CV a chatom (GDPR — právo na výmaz). */
+  async function deleteApplicant() {
+    if (!applicant || deleting) return
+    const name = `${applicant.first_name} ${applicant.last_name}`
+    if (
+      !confirm(
+        `Natrvalo zmazať uchádzača ${name}?\n\nZmaže sa prihláška, životopis aj história chatu. Túto akciu nie je možné vrátiť.`,
+      )
+    )
+      return
+
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.delete(`/admin/applicants/${id}`)
+      navigate(backTo, { replace: true })
+    } catch {
+      setDeleteError('Uchádzača sa nepodarilo zmazať. Skúste to prosím znova.')
+      setDeleting(false)
+    }
   }
 
   if (loading) return <PageLoader label="Načítavame uchádzača…" />
@@ -75,53 +233,98 @@ export default function AdminApplicantDetail() {
       subtitle={`Prihlásený ${formatDateTime(applicant.submitted_at)}`}
       backTo={backTo}
       actions={
-        applicant.cv_storage_path ? (
-          <Button variant="soft" onClick={downloadCv}>
-            <Download className="h-4 w-4" />
-            Stiahnuť CV
-          </Button>
-        ) : (
-          <Badge variant="warning">Bez životopisu</Badge>
-        )
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            {applicant.cv_storage_path ? (
+              <Button variant="soft" onClick={downloadCv} disabled={downloading}>
+                {downloading ? (
+                  <Spinner className="h-4 w-4 border-brand-200 border-t-brand-600" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                {downloading ? 'Sťahujeme…' : 'Stiahnuť CV'}
+              </Button>
+            ) : (
+              <Badge variant="warning">Bez životopisu</Badge>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={deleteApplicant}
+              disabled={deleting}
+              aria-label="Natrvalo zmazať uchádzača"
+              title="Natrvalo zmazať uchádzača"
+              className="text-ink-faint hover:bg-rose-50 hover:text-rose-600"
+            >
+              {deleting ? <Spinner className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+            </Button>
+          </div>
+          {(downloadError || deleteError) && (
+            <p className="max-w-xs text-right text-xs font-medium text-rose-600">
+              {downloadError ?? deleteError}
+            </p>
+          )}
+        </div>
       }
     >
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {/* Ľavý stĺpec — hodnotenie a kontakt */}
         <div className="space-y-4 lg:col-span-3">
-          {/* Celkové AI skóre */}
+          <div className="animate-rise">
+            <RequirementsCard evaluation={applicant.qualification_answers ?? {}} />
+          </div>
+
+          {/* Celkové hodnotenie */}
           <Card className="overflow-hidden animate-rise">
             <CardContent className="p-6">
               <div className="flex items-start gap-5">
-                <ScoreRing score={applicant.ai_score} size="lg" />
+                <ScoreRing score={applicant.ai_score} status={applicant.ai_status} size="lg" />
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-base font-semibold text-ink">Hodnotenie AI</h2>
-                    <Badge variant="accent">
-                      <Sparkles className="h-3 w-3" />
-                      {scoreLabel(applicant.ai_score)}
-                    </Badge>
-                  </div>
+                  <h2 className="text-base font-semibold text-ink">Celkové hodnotenie</h2>
                   {reasoning ? (
                     <p className="mt-2 text-sm leading-relaxed text-ink-soft">{reasoning}</p>
                   ) : (
-                    <p className="mt-2 text-sm text-ink-faint">
+                    <p
+                      className={`mt-2 text-sm ${
+                        applicant.ai_status === 'failed' ? 'text-rose-600' : 'text-ink-faint'
+                      }`}
+                    >
                       {applicant.ai_score == null
-                        ? 'Hodnotenie ešte prebieha. Obnovte stránku o chvíľu.'
-                        : 'Model neuviedol zdôvodnenie.'}
+                        ? AI_STATUS_TEXT[applicant.ai_status]
+                        : AI_STATUS_TEXT.done}
                     </p>
+                  )}
+                  {(applicant.ai_status === 'failed' || applicant.ai_status === 'skipped') && (
+                    <div className="mt-3 flex flex-col items-start gap-1">
+                      <Button size="sm" variant="soft" onClick={retryEvaluation} disabled={retrying}>
+                        {retrying ? (
+                          <Spinner className="h-3.5 w-3.5 border-brand-200 border-t-brand-600" />
+                        ) : (
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        )}
+                        Skúsiť znova
+                      </Button>
+                      {retryError && (
+                        <p className="text-xs font-medium text-rose-600">{retryError}</p>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <div className="animate-rise">
-            <RequirementsCard evaluation={applicant.qualification_answers ?? {}} />
-          </div>
-
           <Card className="animate-rise">
             <CardContent className="p-6">
-              <h2 className="mb-2 text-base font-semibold text-ink">Kontakt</h2>
+              <h2 className="mb-2 flex items-center gap-2 text-base font-semibold text-ink">
+                Kontakt
+                {applicant.other_applications > 0 && (
+                  <Badge variant="warning" className="ml-auto">
+                    <Copy className="h-3 w-3" />
+                    Ďalšie prihlášky z tohto e-mailu: {applicant.other_applications}
+                  </Badge>
+                )}
+              </h2>
               <div className="divide-y divide-line">
                 <DetailRow
                   icon={Mail}

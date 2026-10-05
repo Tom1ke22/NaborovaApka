@@ -5,20 +5,44 @@ import io
 import pytest
 from docx import Document
 
-from app.core.ai.cv_text import MAX_CHARS, TRUNCATED_MARKER, UnsupportedCvFormat, extract_text
+from app.core.ai.cv_text import (
+    MAX_CHARS,
+    MAX_PAGES,
+    TRUNCATED_MARKER,
+    UnsupportedCvFormat,
+    extract_text,
+)
 
 
 def build_pdf(text: str) -> bytes:
     """Minimálne platné PDF s jednou stranou a jedným textovým objektom."""
-    content = f"BT /F1 12 Tf 20 100 Td ({text}) Tj ET".encode("latin-1")
+    return build_multipage_pdf([text])
+
+
+def build_multipage_pdf(page_texts: list[str]) -> bytes:
+    """Minimálne platné PDF s jednou stranou na každý zadaný text."""
+    count = len(page_texts)
+    # Objekty: 1 katalóg, 2 strom strán, potom pre každú stranu dvojica
+    # (strana, obsah) a nakoniec font.
+    font_number = 3 + 2 * count
+    kids = " ".join(f"{3 + 2 * i} 0 R" for i in range(count))
+
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] "
-        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
-        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        f"<< /Type /Pages /Kids [{kids}] /Count {count} >>".encode(),
     ]
+    for index, text in enumerate(page_texts):
+        content = f"BT /F1 12 Tf 20 100 Td ({text}) Tj ET".encode("latin-1")
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] "
+            f"/Contents {4 + 2 * index} 0 R "
+            f"/Resources << /Font << /F1 {font_number} 0 R >> >> >>".encode()
+        )
+        objects.append(
+            b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream"
+        )
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
     for number, obj in enumerate(objects, start=1):
@@ -81,6 +105,27 @@ def test_long_text_is_truncated_with_marker():
     text = extract_text(data, "cv.docx")
     assert text.endswith(TRUNCATED_MARKER)
     assert len(text) <= MAX_CHARS + len(TRUNCATED_MARKER)
+
+
+def test_multipage_pdf_is_read_up_to_the_page_limit():
+    """10 MB PDF môže mať tisíce strán — čítanie textu musí mať strop.
+
+    Text na stranách je krátky, takže limit na znaky sa nestihne uplatniť;
+    testujeme čisto strop na počet strán.
+    """
+    pages = [f"strana {i}" for i in range(MAX_PAGES + 5)]
+    text = extract_text(build_multipage_pdf(pages), "cv.pdf")
+
+    assert "strana 0" in text
+    assert f"strana {MAX_PAGES - 1}" in text
+    assert f"strana {MAX_PAGES}" not in text
+    assert f"strana {MAX_PAGES + 4}" not in text
+
+
+def test_pdf_under_the_page_limit_is_read_whole():
+    pages = [f"strana {i}" for i in range(5)]
+    text = extract_text(build_multipage_pdf(pages), "cv.pdf")
+    assert all(f"strana {i}" in text for i in range(5))
 
 
 def test_whitespace_is_normalized():

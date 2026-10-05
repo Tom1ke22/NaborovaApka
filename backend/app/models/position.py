@@ -3,13 +3,13 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
-    Boolean, Date, Enum, ForeignKey, Integer, Numeric,
+    Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, Numeric,
     String, Text, UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base
+from app.db.base import Base, utcnow
 
 
 class ContractTypeEnum(str, enum.Enum):
@@ -32,6 +32,10 @@ class PositionStatusEnum(str, enum.Enum):
 
 class Position(Base):
     __tablename__ = "positions"
+    __table_args__ = (
+        # Admin aj verejný zoznam pozícií firmy, zoradené od najnovších.
+        Index("ix_positions_company_created", "company_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     company_id: Mapped[uuid.UUID] = mapped_column(
@@ -59,9 +63,17 @@ class Position(Base):
     status: Mapped[PositionStatusEnum] = mapped_column(
         Enum(PositionStatusEnum), nullable=False, default=PositionStatusEnum.active
     )
+    # Dve polia zámerne oddelene podľa toho, kto text uvidí:
+    # `ai_bot_instructions` ide chatbotovi (uchádzač ich počuje v odpovediach),
+    # `ai_evaluation_notes` iba hodnotiacemu modelu a nikdy nie na verejné API.
     ai_bot_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
+    ai_evaluation_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
     company: Mapped["Company"] = relationship(back_populates="positions")
     requirements: Mapped["PositionRequirements"] = relationship(
@@ -86,5 +98,11 @@ class PositionRequirements(Base):
     education_level: Mapped[str | None] = mapped_column(String(100), nullable=True)
     slovak_language_level: Mapped[str | None] = mapped_column(String(50), nullable=True)
     foreign_language_level: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Vlastné požiadavky, ktoré si firma dopísala nad rámec pevných polí.
+    # Tvar: [{"label": "vodičský preukaz B"}, …]. Bez vlastnej tabuľky —
+    # je to krátky zoznam, ktorý sa vždy číta aj zapisuje celý naraz.
+    custom_requirements: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
 
     position: Mapped["Position"] = relationship(back_populates="requirements")

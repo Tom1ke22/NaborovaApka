@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '@/lib/api'
+import { parseSalary } from '@/lib/salary'
 import { type Position, type ContractType, type SalaryPeriod, CONTRACT_TYPE_LABELS } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,11 +17,55 @@ import {
   FileText,
   Info,
   ListChecks,
+  Lock,
+  MessageSquare,
+  Plus,
   Sparkles,
   TriangleAlert,
   Wallet,
   Briefcase,
 } from 'lucide-react'
+
+/** Koľko vlastných požiadaviek pustí backend do promptu (MAX_CUSTOM_REQUIREMENTS). */
+const MAX_CUSTOM_REQUIREMENTS = 10
+
+/** Hranice čísel — musia sedieť so schémou na backende (app/schemas/position.py). */
+const MAX_OPEN_SLOTS = 1000
+const MAX_VACATION_DAYS = 365
+const MAX_EXPERIENCE_YEARS = 60
+
+/** Názvy polí pre chybu 422 z backendu. */
+const FIELD_LABELS: Record<string, string> = {
+  title: 'Názov pozície', work_area: 'Pracovná oblasť', location: 'Miesto výkonu práce',
+  open_slots: 'Voľných miest', start_date: 'Dátum nástupu', salary_amount: 'Základná mzda',
+  vacation_days: 'Dovolenka', experience_years: 'Roky praxe', working_hours: 'Pracovný čas',
+  shift_type: 'Zmennosť', work_regime: 'Pracovný režim', break_info: 'Prestávka',
+  meal_allowance: 'Stravné', contact_person: 'Kontaktná osoba',
+}
+
+function describeValidationError(err: unknown): string | null {
+  const response = (err as { response?: { status?: number; data?: { detail?: unknown } } }).response
+  if (response?.status !== 422 || !Array.isArray(response.data?.detail)) return null
+  const fields = new Set<string>()
+  for (const item of response.data.detail as { loc?: unknown[] }[]) {
+    const key = String(item.loc?.[item.loc.length - 1] ?? '')
+    fields.add(FIELD_LABELS[key] ?? key)
+  }
+  return `Skontrolujte tieto polia: ${[...fields].join(', ')}.`
+}
+
+/** Riadok vlastnej požiadavky vo formulári. Vlastné `id` (nie index) drží
+ *  poradie stabilné aj keď sa nové pridávajú hore — inak by React pri
+ *  posune indexov popreraďoval vstupné polia pod prstami. */
+interface CustomRequirementRow {
+  id: number
+  label: string
+  required: boolean
+}
+
+/** Požiadavky s vlastným stĺpcom v databáze — na rozdiel od vlastných sa nedajú
+ *  zmazať natrvalo, kôš ich len vypne a schová do zatvorenia formulára. */
+type FixedRequirement = 'req_hygiene' | 'req_health_cert' | 'req_experience'
 
 interface Props {
   position: Position | null
@@ -33,9 +78,11 @@ const EMPTY_FORM = {
   additional_info: '', location: '', contract_type: 'neuricity_cas' as ContractType,
   working_hours: '', shift_type: '', break_info: '', work_regime: '',
   salary_amount: '', salary_period: 'monthly' as SalaryPeriod,
-  vacation_days: '', meal_allowance: '', contact_person: '', ai_bot_instructions: '',
+  vacation_days: '', meal_allowance: '', contact_person: '',
+  ai_bot_instructions: '', ai_evaluation_notes: '',
   req_hygiene: false, req_health_cert: false, req_experience: false,
   req_experience_years: '', req_education: '', req_slovak: '', req_foreign: '',
+  req_custom: [] as CustomRequirementRow[],
 }
 
 function toForm(pos: Position) {
@@ -50,6 +97,7 @@ function toForm(pos: Position) {
     salary_period: pos.salary_period, vacation_days: pos.vacation_days?.toString() ?? '',
     meal_allowance: pos.meal_allowance ?? '', contact_person: pos.contact_person ?? '',
     ai_bot_instructions: pos.ai_bot_instructions ?? '',
+    ai_evaluation_notes: pos.ai_evaluation_notes ?? '',
     req_hygiene: r?.hygiene_minimum_required ?? false,
     req_health_cert: r?.health_certificate_required ?? false,
     req_experience: r?.experience_required ?? false,
@@ -57,6 +105,11 @@ function toForm(pos: Position) {
     req_education: r?.education_level ?? '',
     req_slovak: r?.slovak_language_level ?? '',
     req_foreign: r?.foreign_language_level ?? '',
+    req_custom: (r?.custom_requirements ?? []).map((c, i) => ({
+      id: i,
+      label: c.label,
+      required: c.required ?? true,
+    })),
   }
 }
 
@@ -93,16 +146,62 @@ function Section({
 }
 
 export default function PositionForm({ position, onSaved, onCancel }: Props) {
-  const [form, setForm] = useState(position ? toForm(position) : EMPTY_FORM)
+  const [initialForm] = useState(() => (position ? toForm(position) : EMPTY_FORM))
+  const [form, setForm] = useState(initialForm)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [salaryError, setSalaryError] = useState<string | null>(null)
+  const [customDraft, setCustomDraft] = useState('')
+  const [removedFixed, setRemovedFixed] = useState<FixedRequirement[]>([])
+
+  // Ďalšie voľné id pre nový riadok — nadväzuje na tie, čo už priniesol
+  // toForm, nech sa nikdy nezopakujú.
+  const nextCustomId = useRef(initialForm.req_custom.length)
 
   function set(field: string, value: unknown) {
     setForm((prev) => ({ ...prev, [field]: value }))
   }
 
+  function addCustomRequirement() {
+    const label = customDraft.trim()
+    if (!label) return
+    setForm((prev) => {
+      if (prev.req_custom.length >= MAX_CUSTOM_REQUIREMENTS) return prev
+      const row = { id: nextCustomId.current++, label, required: true }
+      return { ...prev, req_custom: [...prev.req_custom, row] }
+    })
+    setCustomDraft('')
+  }
+
+  function toggleCustomRequirement(id: number, required: boolean) {
+    setForm((prev) => ({
+      ...prev,
+      req_custom: prev.req_custom.map((item) => (item.id === id ? { ...item, required } : item)),
+    }))
+  }
+
+  // Kôš pri pevnej požiadavke ju vypne a riadok schová do zatvorenia formulára.
+  function removeFixedRequirement(field: FixedRequirement) {
+    setForm((prev) => ({ ...prev, [field]: false }))
+    setRemovedFixed((prev) => [...prev, field])
+  }
+
+  function removeCustomRequirement(id: number) {
+    setForm((prev) => ({
+      ...prev,
+      req_custom: prev.req_custom.filter((item) => item.id !== id),
+    }))
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    const salary = parseSalary(form.salary_amount)
+    if ('error' in salary) {
+      setSalaryError(salary.error)
+      setError('Mzda má neplatný formát.')
+      return
+    }
+    setSalaryError(null)
     setSaving(true)
     setError(null)
     try {
@@ -113,12 +212,13 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
         contract_type: form.contract_type, working_hours: form.working_hours || null,
         shift_type: form.shift_type || null, break_info: form.break_info || null,
         work_regime: form.work_regime || null,
-        salary_amount: form.salary_amount ? Number(form.salary_amount) : null,
+        salary_amount: salary.value,
         salary_period: form.salary_period,
         vacation_days: form.vacation_days ? Number(form.vacation_days) : null,
         meal_allowance: form.meal_allowance || null,
         contact_person: form.contact_person || null,
         ai_bot_instructions: form.ai_bot_instructions || null,
+        ai_evaluation_notes: form.ai_evaluation_notes || null,
         requirements: {
           hygiene_minimum_required: form.req_hygiene,
           health_certificate_required: form.req_health_cert,
@@ -127,6 +227,10 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
           education_level: form.req_education || null,
           slovak_language_level: form.req_slovak || null,
           foreign_language_level: form.req_foreign || null,
+          custom_requirements: form.req_custom.map((item) => ({
+            label: item.label,
+            required: item.required,
+          })),
         },
       }
       if (position) {
@@ -135,8 +239,8 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
         await api.post('/admin/positions', body)
       }
       onSaved()
-    } catch {
-      setError('Nastala chyba pri ukladaní.')
+    } catch (err) {
+      setError(describeValidationError(err) ?? 'Nastala chyba pri ukladaní.')
     } finally {
       setSaving(false)
     }
@@ -178,6 +282,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                   required
                   placeholder="napr. Pekár – ranná zmena"
                   value={form.title}
+                  maxLength={255}
                   onChange={(e) => set('title', e.target.value)}
                 />
               </Field>
@@ -186,6 +291,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                   required
                   placeholder="napr. Výroba"
                   value={form.work_area}
+                  maxLength={255}
                   onChange={(e) => set('work_area', e.target.value)}
                 />
               </Field>
@@ -194,6 +300,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                   required
                   placeholder="napr. Košice"
                   value={form.location}
+                  maxLength={255}
                   onChange={(e) => set('location', e.target.value)}
                 />
               </Field>
@@ -201,6 +308,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                 <Input
                   type="number"
                   min={1}
+                  max={MAX_OPEN_SLOTS}
                   required
                   value={form.open_slots}
                   onChange={(e) => set('open_slots', e.target.value)}
@@ -209,6 +317,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
               <Field label="Dátum nástupu" hint="Nechajte prázdne, ak je nástup dohodou.">
                 <Input
                   type="date"
+                  min="2000-01-01"
                   value={form.start_date}
                   onChange={(e) => set('start_date', e.target.value)}
                 />
@@ -241,6 +350,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                   rows={6}
                   placeholder="Čo bude zamestnanec robiť, s kým bude pracovať, ako vyzerá bežný deň…"
                   value={form.description}
+                  maxLength={10000}
                   onChange={(e) => set('description', e.target.value)}
                 />
               </Field>
@@ -249,6 +359,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                   rows={3}
                   placeholder="Benefity, možnosť ubytovania, doprava…"
                   value={form.additional_info}
+                  maxLength={10000}
                   onChange={(e) => set('additional_info', e.target.value)}
                 />
               </Field>
@@ -262,14 +373,19 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
             tint="bg-emerald-50 text-emerald-600 ring-emerald-100"
           >
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Field label="Základná mzda (€)">
+              <Field label="Základná mzda (€)" error={salaryError ?? undefined}>
                 <Input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  placeholder="0.00"
+                  inputMode="decimal"
+                  placeholder="napr. 1 250,50"
                   value={form.salary_amount}
-                  onChange={(e) => set('salary_amount', e.target.value)}
+                  onChange={(e) => {
+                    set('salary_amount', e.target.value)
+                    setSalaryError(null)
+                  }}
+                  onBlur={() => {
+                    const salary = parseSalary(form.salary_amount)
+                    setSalaryError('error' in salary ? salary.error : null)
+                  }}
                 />
               </Field>
               <Field label="Obdobie mzdy">
@@ -284,6 +400,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
               <Field label="Pracovný čas">
                 <Input
                   value={form.working_hours}
+                  maxLength={100}
                   onChange={(e) => set('working_hours', e.target.value)}
                   placeholder="napr. 06:00–14:00"
                 />
@@ -291,6 +408,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
               <Field label="Zmennosť">
                 <Input
                   value={form.shift_type}
+                  maxLength={100}
                   onChange={(e) => set('shift_type', e.target.value)}
                   placeholder="napr. dvojzmenná"
                 />
@@ -298,6 +416,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
               <Field label="Pracovný režim">
                 <Input
                   value={form.work_regime}
+                  maxLength={100}
                   onChange={(e) => set('work_regime', e.target.value)}
                   placeholder="napr. turnus 4/4"
                 />
@@ -305,6 +424,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
               <Field label="Prestávka">
                 <Input
                   value={form.break_info}
+                  maxLength={100}
                   onChange={(e) => set('break_info', e.target.value)}
                   placeholder="napr. 30 minút"
                 />
@@ -313,6 +433,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                 <Input
                   type="number"
                   min={0}
+                  max={MAX_VACATION_DAYS}
                   value={form.vacation_days}
                   onChange={(e) => set('vacation_days', e.target.value)}
                 />
@@ -320,6 +441,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
               <Field label="Stravné">
                 <Input
                   value={form.meal_allowance}
+                  maxLength={255}
                   onChange={(e) => set('meal_allowance', e.target.value)}
                   placeholder="napr. gastrolístky 5,50 €"
                 />
@@ -327,6 +449,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
               <Field label="Kontaktná osoba" className="sm:col-span-2">
                 <Input
                   value={form.contact_person}
+                  maxLength={255}
                   onChange={(e) => set('contact_person', e.target.value)}
                   placeholder="Meno a priezvisko"
                 />
@@ -345,6 +468,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                 <Field label="Úroveň vzdelania">
                   <Input
                     value={form.req_education}
+                  maxLength={100}
                     onChange={(e) => set('req_education', e.target.value)}
                     placeholder="napr. stredoškolské"
                   />
@@ -352,6 +476,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                 <Field label="Úroveň slovenčiny">
                   <Input
                     value={form.req_slovak}
+                  maxLength={50}
                     onChange={(e) => set('req_slovak', e.target.value)}
                     placeholder="napr. plynulo"
                   />
@@ -359,6 +484,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                 <Field label="Cudzí jazyk">
                   <Input
                     value={form.req_foreign}
+                  maxLength={100}
                     onChange={(e) => set('req_foreign', e.target.value)}
                     placeholder="napr. EN-B2"
                   />
@@ -368,6 +494,7 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
                     <Input
                       type="number"
                       min={0}
+                      max={MAX_EXPERIENCE_YEARS}
                       value={form.req_experience_years}
                       onChange={(e) => set('req_experience_years', e.target.value)}
                     />
@@ -376,44 +503,145 @@ export default function PositionForm({ position, onSaved, onCancel }: Props) {
               </div>
 
               <div className="grid gap-2.5">
-                <CheckboxRow
-                  checked={form.req_hygiene}
-                  onChange={(v) => set('req_hygiene', v)}
-                  label="Vyžaduje sa hygienické minimum"
-                />
-                <CheckboxRow
-                  checked={form.req_health_cert}
-                  onChange={(v) => set('req_health_cert', v)}
-                  label="Vyžaduje sa zdravotný preukaz"
-                  description="Zákonná požiadavka pri práci s potravinami."
-                />
-                <CheckboxRow
-                  checked={form.req_experience}
-                  onChange={(v) => set('req_experience', v)}
-                  label="Vyžaduje sa prax"
-                  description="Po zapnutí môžete zadať minimálny počet rokov."
-                />
+                {!removedFixed.includes('req_hygiene') && (
+                  <CheckboxRow
+                    checked={form.req_hygiene}
+                    onChange={(v) => set('req_hygiene', v)}
+                    label="Vyžaduje sa hygienické minimum"
+                    onRemove={() => removeFixedRequirement('req_hygiene')}
+                  />
+                )}
+                {!removedFixed.includes('req_health_cert') && (
+                  <CheckboxRow
+                    checked={form.req_health_cert}
+                    onChange={(v) => set('req_health_cert', v)}
+                    label="Vyžaduje sa zdravotný preukaz"
+                    description="Zákonná požiadavka pri práci s potravinami."
+                    onRemove={() => removeFixedRequirement('req_health_cert')}
+                  />
+                )}
+                {!removedFixed.includes('req_experience') && (
+                  <CheckboxRow
+                    checked={form.req_experience}
+                    onChange={(v) => set('req_experience', v)}
+                    label="Vyžaduje sa prax"
+                    description="Po zapnutí môžete zadať minimálny počet rokov."
+                    onRemove={() => removeFixedRequirement('req_experience')}
+                  />
+                )}
+
+                {form.req_custom.map((item) => (
+                  <div key={item.id} className="animate-fade">
+                    <CheckboxRow
+                      checked={item.required}
+                      onChange={(v) => toggleCustomRequirement(item.id, v)}
+                      label={item.label}
+                      onRemove={() => removeCustomRequirement(item.id)}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Vlastné požiadavky — čokoľvek, na čo pevné polia nestačia */}
+              <div className="border-t border-line pt-5">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-ink">Vlastné požiadavky</h3>
+                  <p className="mt-0.5 text-sm text-ink-faint">
+                    Čokoľvek navyše, napríklad vodičský preukaz B. AI ich hodnotí rovnako
+                    ako tie vyššie.
+                  </p>
+                </div>
+
+                <div className="mt-4 flex items-center gap-2">
+                  <Input
+                    value={customDraft}
+                    maxLength={200}
+                    autoComplete="off"
+                    placeholder="napr. vodičský preukaz B"
+                    disabled={form.req_custom.length >= MAX_CUSTOM_REQUIREMENTS}
+                    onChange={(e) => setCustomDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      // Bez toho by Enter odoslal celý formulár.
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addCustomRequirement()
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    aria-label="Pridať vlastnú požiadavku"
+                    onClick={addCustomRequirement}
+                    disabled={
+                      !customDraft.trim() || form.req_custom.length >= MAX_CUSTOM_REQUIREMENTS
+                    }
+                    className="shrink-0"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {form.req_custom.length >= MAX_CUSTOM_REQUIREMENTS && (
+                  <p className="mt-3 text-xs text-ink-faint">
+                    Viac než {MAX_CUSTOM_REQUIREMENTS} vlastných požiadaviek sa už pridať nedá.
+                  </p>
+                )}
               </div>
             </div>
           </Section>
 
           <Section
             icon={Sparkles}
-            title="AI chatbot"
-            description="Voliteľné pokyny navyše pre asistenta, ktorý sa rozpráva s uchádzačmi."
+            title="AI"
+            description="Dve oddelené polia podľa toho, kto text uvidí. Obe sú voliteľné."
             tint="bg-brand-50 text-brand-600 ring-brand-100"
           >
-            <Field
-              label="Inštrukcie pre AI chatbota"
-              hint="Napríklad: zdôrazni možnosť ubytovania, opýtaj sa na vodičský preukaz."
-            >
-              <Textarea
-                rows={4}
-                value={form.ai_bot_instructions}
-                onChange={(e) => set('ai_bot_instructions', e.target.value)}
-                placeholder="Voľný text – čo má chatbot vedieť, na čo sa pýtať, čo zdôrazniť…"
-              />
-            </Field>
+            <div className="space-y-6">
+              <Field
+                label={
+                  <span className="flex items-center gap-1.5">
+                    <MessageSquare className="h-4 w-4 text-brand-600" />
+                    Čo má chatbot povedať uchádzačom
+                  </span>
+                }
+                hint="Uchádzač to počuje v odpovediach. Napríklad: zdôrazni možnosť ubytovania, opýtaj sa na vodičský preukaz."
+              >
+                <Textarea
+                  rows={4}
+                  value={form.ai_bot_instructions}
+                  maxLength={4000}
+                  onChange={(e) => set('ai_bot_instructions', e.target.value)}
+                  placeholder="Voľný text – čo má chatbot vedieť, na čo sa pýtať, čo zdôrazniť…"
+                />
+              </Field>
+
+              <Field
+                label={
+                  <span className="flex items-center gap-1.5">
+                    <Lock className="h-4 w-4 text-ink-faint" />
+                    Interné poznámky pre hodnotenie
+                  </span>
+                }
+                hint="Podľa čoho sa má uchádzač bodovať. Napríklad: uprednostni niekoho z okolia, pozor na časté striedanie zamestnaní."
+              >
+                <Textarea
+                  rows={4}
+                  value={form.ai_evaluation_notes}
+                  maxLength={4000}
+                  onChange={(e) => set('ai_evaluation_notes', e.target.value)}
+                  placeholder="Voľný text – na čo si dať pri uchádzačovi pozor…"
+                />
+                <p className="mt-2 flex items-start gap-2 rounded-lg bg-surface-sunken px-3 py-2 text-xs leading-relaxed text-ink-soft">
+                  <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Uchádzač toto nikdy neuvidí a chatbot sa tým v rozhovore neriadi — premietne
+                    sa len do skóre.
+                  </span>
+                </p>
+              </Field>
+            </div>
           </Section>
 
           {error && (

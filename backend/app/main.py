@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -7,10 +9,21 @@ from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.core.logging_config import setup_logging
+from app.db.revision_check import ensure_database_at_head
 
 setup_logging(settings.env)
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Stará schéma = appka nenaštartuje s jasnou chybou, namiesto 500 na
+    # UndefinedColumnError až pri prvom requeste (pozri revision_check.py).
+    await ensure_database_at_head(settings.database_url)
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Recruitment App API",
     version="0.1.0",
     docs_url="/api/docs" if settings.env == "development" else None,

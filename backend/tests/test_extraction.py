@@ -5,9 +5,19 @@ from types import SimpleNamespace
 from tests.conftest import run
 
 from app.core.ai import extraction as extraction_module
-from app.core.ai.extraction import _to_profile, build_prompt, extract_profile
+from app.core.ai.extraction import (
+    TRUNCATED_MARKER,
+    _to_profile,
+    build_prompt,
+    extract_profile,
+)
 from app.core.ai.prompts import CHAT_OPEN, CV_OPEN
 from app.core.ai.schemas import Answer, ExtractedProfile, Source
+from app.core.limits import (
+    EXTRACTION_MAX_OUTPUT_TOKENS,
+    MAX_CHAT_TRANSCRIPT_CHARS,
+    MAX_CV_CHARS,
+)
 
 POSITION = SimpleNamespace(
     title="Kuchár",
@@ -28,6 +38,7 @@ POSITION = SimpleNamespace(
     description=None,
     additional_info=None,
     ai_bot_instructions=None,
+    ai_evaluation_notes=None,
 )
 
 PROFILE_JSON = (
@@ -71,10 +82,53 @@ def test_missing_chat_is_stated_explicitly():
     assert "Chat: uchádzač si nepísal s asistentom." in prompt
 
 
-def test_company_instructions_are_included():
-    position = SimpleNamespace(**{**POSITION.__dict__, "ai_bot_instructions": "Over prax s veľkou kuchyňou."})
+def test_internal_notes_are_included():
+    position = SimpleNamespace(
+        **{**POSITION.__dict__, "ai_evaluation_notes": "Over prax s veľkou kuchyňou."}
+    )
     prompt = build_prompt(position, None, "CV", "chat")
     assert "Over prax s veľkou kuchyňou." in prompt
+
+
+def test_chatbot_instructions_do_not_reach_the_evaluator():
+    """Pokyny pre chatbota hovoria, čo povedať — nie podľa čoho hodnotiť."""
+    position = SimpleNamespace(
+        **{**POSITION.__dict__, "ai_bot_instructions": "Zdôrazni možnosť ubytovania."}
+    )
+    prompt = build_prompt(position, None, "CV", "chat")
+    assert "ubytovania" not in prompt
+
+
+# --------------------------------------------------------------------------- #
+# Stropy na dĺžku promptu (cena volania)
+# --------------------------------------------------------------------------- #
+
+def test_overlong_cv_text_is_capped():
+    prompt = build_prompt(POSITION, None, "x" * (MAX_CV_CHARS * 3), "chat")
+    assert "x" * MAX_CV_CHARS in prompt
+    assert "x" * (MAX_CV_CHARS + 1) not in prompt
+    assert TRUNCATED_MARKER in prompt
+
+
+def test_overlong_chat_transcript_is_capped():
+    prompt = build_prompt(POSITION, None, "CV", "y" * (MAX_CHAT_TRANSCRIPT_CHARS * 3))
+    assert "y" * MAX_CHAT_TRANSCRIPT_CHARS in prompt
+    assert "y" * (MAX_CHAT_TRANSCRIPT_CHARS + 1) not in prompt
+    assert TRUNCATED_MARKER in prompt
+
+
+def test_capping_keeps_the_end_of_the_transcript():
+    """Relevantné odpovede bývajú v neskorších správach, tie musia ostať."""
+    transcript = "stará správa " + "z" * MAX_CHAT_TRANSCRIPT_CHARS + " POSLEDNÁ VETA"
+    prompt = build_prompt(POSITION, None, "CV", transcript)
+    assert "POSLEDNÁ VETA" in prompt
+    assert "stará správa" not in prompt
+
+
+def test_text_within_the_limit_is_untouched():
+    prompt = build_prompt(POSITION, None, "krátke CV", "krátky chat")
+    assert TRUNCATED_MARKER not in prompt
+    assert "krátke CV" in prompt
 
 
 # --------------------------------------------------------------------------- #
@@ -139,3 +193,48 @@ def test_unparseable_answer_returns_none(monkeypatch):
     response = SimpleNamespace(parsed=None, text="toto nie je JSON")
     monkeypatch.setattr(extraction_module, "get_client", lambda: fake_client(response))
     assert run(extract_profile(POSITION, None, "CV", "chat")) is None
+
+
+def test_request_sets_max_output_tokens(monkeypatch):
+    """Bez stropu na výstup sa dá cena jedného volania nafúknuť bez hranice."""
+    captured = {}
+
+    async def generate_content(*, model, contents, config):
+        captured["config"] = config
+        captured["model"] = model
+        return SimpleNamespace(parsed=None, text=PROFILE_JSON)
+
+    client = SimpleNamespace(
+        aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    )
+    monkeypatch.setattr(extraction_module, "get_client", lambda: client)
+
+    assert run(extract_profile(POSITION, None, "CV text", "chat")) is not None
+    assert captured["config"].max_output_tokens == EXTRACTION_MAX_OUTPUT_TOKENS
+
+
+# --------------------------------------------------------------------------- #
+# Prompt musí modelu zakázať vydávať tvrdenie z chatu za doklad z CV
+# --------------------------------------------------------------------------- #
+
+def test_prompt_forbids_relabelling_a_chat_claim_as_cv():
+    rules = extraction_module.SYSTEM_RULES
+    assert "source nastav na cv IBA ak je fakt naozaj napísaný v životopise" in rules
+    assert "Keď to\n  uchádzač iba povedal v chate, daj chat" in rules
+
+
+def test_prompt_requires_a_quote_for_cv_evidence():
+    rules = extraction_module.SYSTEM_RULES
+    assert "Ak citáciu z životopisu nemáš, nepíš cv." in rules
+
+
+def test_prompt_tells_the_model_to_discount_unverified_claims_in_overall_fit():
+    assert "za\n  nedoložené tvrdenia odhad znižuj" in extraction_module.SYSTEM_RULES
+
+
+def test_schema_descriptions_steer_the_source_field():
+    """Popisy polí model vidí, preto tam to rozlíšenie musí byť tiež."""
+    from app.core.ai.schemas import ExtractedProfile as Profile
+
+    source_desc = Profile.model_fields["hygiene_minimum"].annotation.model_fields["source"].description
+    assert "NIKDY neoznačuj ako cv" in source_desc

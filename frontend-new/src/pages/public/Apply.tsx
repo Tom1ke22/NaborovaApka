@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api'
+import { clearChatClaim, loadChatClaim } from '@/lib/chatSession'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
@@ -33,9 +34,7 @@ function phoneDigits(val: string) {
 
 export default function Apply() {
   const { slug, positionId } = useParams<{ slug: string; positionId: string }>()
-  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const sessionId = searchParams.get('session') ?? ''
 
   const [form, setForm] = useState({ first_name: '', last_name: '', phone: '', email: '' })
   const [touched, setTouched] = useState<Set<FieldKey>>(new Set())
@@ -138,7 +137,13 @@ export default function Apply() {
     try {
       const data = new FormData()
       data.append('position_id', positionId!)
-      data.append('session_id', sessionId)
+      // Chat z tejto karty, ak uchádzač prišiel z asistenta. Server ho
+      // pripojí len s platným claim tokenom.
+      const claim = loadChatClaim(slug!, positionId!)
+      if (claim) {
+        data.append('session_id', claim.session_id)
+        data.append('claim_token', claim.claim_token)
+      }
       data.append('first_name', form.first_name.trim())
       data.append('last_name', form.last_name.trim())
       data.append('phone', form.phone.trim())
@@ -148,9 +153,19 @@ export default function Apply() {
       await api.post(`/${slug}/applicants`, data, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
+      clearChatClaim(slug!, positionId!)
       setSubmitted(true)
-    } catch {
-      setSubmitError('Nastala chyba pri odosielaní. Skúste znova.')
+    } catch (err) {
+      // 400/422 nesie zrozumiteľný dôvod (neplatné CV, e-mail, telefón…).
+      // Uchádzač ho musí vidieť, inak skúša znova to isté.
+      const response = (err as { response?: { status?: number; data?: { detail?: unknown } } })
+        .response
+      const detail = response?.data?.detail
+      setSubmitError(
+        typeof detail === 'string' && (response?.status === 400 || response?.status === 422)
+          ? detail
+          : 'Nastala chyba pri odosielaní. Skúste znova.',
+      )
     } finally {
       setSubmitting(false)
     }
@@ -174,7 +189,7 @@ export default function Apply() {
             </p>
           </div>
           <CardContent className="flex flex-col gap-2 p-6">
-            <Button onClick={() => navigate(`/${slug}`)} size="lg" className="w-full">
+            <Button to={`/${slug}`} size="lg" className="w-full">
               Späť na pozície
             </Button>
           </CardContent>
@@ -212,6 +227,7 @@ export default function Apply() {
                   <Input
                     placeholder="Ján"
                     value={form.first_name}
+                    maxLength={100}
                     onChange={(e) => handleName('first_name', e.target.value)}
                     className={fieldClass('first_name')}
                   />
@@ -220,6 +236,7 @@ export default function Apply() {
                   <Input
                     placeholder="Novák"
                     value={form.last_name}
+                    maxLength={100}
                     onChange={(e) => handleName('last_name', e.target.value)}
                     className={fieldClass('last_name')}
                   />
@@ -236,6 +253,7 @@ export default function Apply() {
                   type="tel"
                   placeholder="+421 9XX XXX XXX"
                   value={form.phone}
+                    maxLength={30}
                   onChange={(e) => handlePhone(e.target.value)}
                   className={fieldClass('phone')}
                 />
@@ -246,6 +264,7 @@ export default function Apply() {
                   type="email"
                   placeholder="jan.novak@email.sk"
                   value={form.email}
+                    maxLength={255}
                   onChange={(e) => handleEmail(e.target.value)}
                   className={fieldClass('email')}
                 />

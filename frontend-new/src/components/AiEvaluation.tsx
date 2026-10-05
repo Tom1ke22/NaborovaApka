@@ -6,10 +6,10 @@
  * za jednotlivé požiadavky. Tu sa z toho robí niečo, čo prečíta personalistka
  * — nie surový JSON.
  */
-import { CircleCheck, CircleQuestionMark, CircleX, ListChecks } from 'lucide-react'
+import { CircleAlert, CircleCheck, CircleQuestionMark, CircleX, ListChecks } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
-import { AI_SOURCE_LABELS } from '@/types'
-import type { AiAnswer, AiCriterion, AiEvaluation, AiFact, AiProfile } from '@/types'
+import { AI_SOURCE_LABELS, aiVerdict } from '@/types'
+import type { AiCriterion, AiEvaluation, AiFact, AiProfile, AiVerdict } from '@/types'
 
 /* --------------------------------------------------------------------------
  * Pomocné mapovania
@@ -25,36 +25,48 @@ const FACT_KEYS = [
   'foreign_language',
 ] as const
 
-const STATUS_META: Record<
-  AiAnswer,
-  { label: string; Icon: typeof CircleCheck; icon: string; chip: string; row: string }
+/**
+ * Zelená patrí výhradne `documented`. Tvrdenie z chatu je žlté a výslovne
+ * pomenované „podľa uchádzača", aby si personalistka nikdy nemohla pomýliť
+ * doklad so vetou, ktorú uchádzač napísal do chatu.
+ *
+ * „Nedoložené" je zámerne neutrálne sivé, nie žlté: žltá teraz znamená
+ * „pozor, neoverené", a chýbajúci údaj nie je to isté ako neoverené tvrdenie.
+ */
+const VERDICT_META: Record<
+  AiVerdict,
+  { label: string; Icon: typeof CircleCheck; icon: string; chip: string; row: string; note?: string }
 > = {
-  yes: {
-    label: 'Spĺňa',
+  documented: {
+    label: 'Doložené v CV',
     Icon: CircleCheck,
     icon: 'text-emerald-600',
     chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
     row: 'bg-emerald-50/40',
   },
-  no: {
+  claimed: {
+    label: 'Podľa uchádzača',
+    Icon: CircleAlert,
+    icon: 'text-amber-500',
+    chip: 'bg-amber-50 text-amber-800 ring-amber-300',
+    row: 'bg-amber-50/50',
+    note: 'Uchádzač to uviedol v chate, v životopise to doložené nie je.',
+  },
+  unmet: {
     label: 'Nespĺňa',
     Icon: CircleX,
     icon: 'text-rose-500',
     chip: 'bg-rose-50 text-rose-700 ring-rose-200',
     row: 'bg-rose-50/40',
   },
-  unknown: {
+  undocumented: {
     label: 'Nedoložené',
     Icon: CircleQuestionMark,
-    icon: 'text-amber-500',
-    chip: 'bg-amber-50 text-amber-700 ring-amber-200',
-    row: 'bg-amber-50/40',
+    icon: 'text-ink-faint',
+    chip: 'bg-surface-sunken text-ink-soft ring-line-strong',
+    row: 'bg-surface-sunken/60',
+    note: 'Uchádzač to neuviedol v životopise ani v chate.',
   },
-}
-
-/** 2 → „2", 1.5 → „1,5". Body chodia z backendu ako desatinné čísla. */
-function num(n: number): string {
-  return Number(n.toFixed(2)).toString().replace('.', ',')
 }
 
 /** „prax v odbore" → „Prax v odbore". CSS `capitalize` by zdvihlo každé slovo. */
@@ -63,8 +75,12 @@ function sentenceCase(text: string): string {
 }
 
 function factFor(profile: AiProfile | undefined, key: string): AiFact | undefined {
-  if (!profile || !(FACT_KEYS as readonly string[]).includes(key)) return undefined
-  return profile[key as (typeof FACT_KEYS)[number]]
+  if (!profile) return undefined
+  if ((FACT_KEYS as readonly string[]).includes(key)) {
+    return profile[key as (typeof FACT_KEYS)[number]]
+  }
+  // Vlastné požiadavky nemajú pevné pole, chodia ako zoznam s kľúčom.
+  return profile.custom_requirements?.find((fact) => fact.key === key)
 }
 
 /* --------------------------------------------------------------------------
@@ -72,7 +88,8 @@ function factFor(profile: AiProfile | undefined, key: string): AiFact | undefine
  * ------------------------------------------------------------------------ */
 
 function CriterionRow({ criterion, fact }: { criterion: AiCriterion; fact?: AiFact }) {
-  const meta = STATUS_META[criterion.status] ?? STATUS_META.unknown
+  const verdict = aiVerdict(criterion)
+  const meta = VERDICT_META[verdict]
   const { Icon } = meta
   const source = AI_SOURCE_LABELS[fact?.source ?? criterion.source] || ''
 
@@ -87,25 +104,18 @@ function CriterionRow({ criterion, fact }: { criterion: AiCriterion; fact?: AiFa
           >
             {meta.label}
           </span>
-          <span className="ml-auto shrink-0 text-xs font-medium tabular-nums text-ink-faint">
-            {num(criterion.earned)} z {num(criterion.weight)} b.
-          </span>
         </div>
 
         {criterion.detail && <p className="mt-1 text-sm text-ink-soft">{criterion.detail}</p>}
 
-        {fact?.evidence ? (
+        {fact?.evidence && (
           <p className="mt-2 border-l-2 border-line-strong pl-2.5 text-sm italic text-ink-soft">
             „{fact.evidence}“
             {source && <span className="not-italic text-xs text-ink-faint"> — {source}</span>}
           </p>
-        ) : (
-          criterion.status === 'unknown' && (
-            <p className="mt-1.5 text-sm text-ink-faint">
-              Uchádzač to neuviedol v životopise ani v chate.
-            </p>
-          )
         )}
+
+        {meta.note && <p className="mt-1.5 text-sm text-ink-faint">{meta.note}</p>}
       </div>
     </div>
   )
@@ -119,6 +129,7 @@ export function RequirementsCard({ evaluation }: { evaluation: AiEvaluation }) {
 
   const ratio = detail.requirements_ratio
   const pct = ratio != null ? Math.round(ratio * 100) : null
+  const claimed = criteria.filter((c) => aiVerdict(c) === 'claimed')
 
   return (
     <Card>
@@ -130,14 +141,28 @@ export function RequirementsCard({ evaluation }: { evaluation: AiEvaluation }) {
           </h2>
           {pct != null && (
             <span className="ml-auto text-sm font-semibold tabular-nums text-ink-soft">
-              {pct} % bodov
+              Splnené na {pct} %
             </span>
           )}
         </div>
 
         <p className="text-xs text-ink-faint">
           Čo model našiel v životopise a v chate k požiadavkám, ktoré má pozícia zapnuté.
+          Zelené je doložené v životopise, žlté uchádzač iba povedal v chate.
         </p>
+
+        {claimed.length > 0 && (
+          <p className="mt-3 flex gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            <span>
+              {claimed.length === 1
+                ? 'Jedna požiadavka je splnená len podľa slov uchádzača'
+                : `${claimed.length} požiadavky sú splnené len podľa slov uchádzača`}{' '}
+              a v životopise doložené nie sú: {claimed.map((c) => c.label).join(', ')}. Do skóre
+              sa počítajú len čiastočne — overte si ich na pohovore.
+            </span>
+          </p>
+        )}
 
         {pct != null && (
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-surface-sunken">

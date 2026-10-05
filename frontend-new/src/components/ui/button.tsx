@@ -1,9 +1,16 @@
 import { cn } from '@/lib/utils'
-import { type ButtonHTMLAttributes, forwardRef } from 'react'
+import { type AnchorHTMLAttributes, type ButtonHTMLAttributes, forwardRef } from 'react'
+import { Link } from 'react-router-dom'
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'default' | 'accent' | 'soft' | 'outline' | 'ghost' | 'destructive'
   size?: 'sm' | 'md' | 'lg' | 'icon'
+  /**
+   * Ak tlačidlo iba niekam prekliká, dajte sem cieľ namiesto onClick.
+   * Vykreslí sa ako odkaz, takže cmd/ctrl + klik otvorí novú kartu
+   * a shift + klik nové okno.
+   */
+  to?: string
 }
 
 const VARIANTS: Record<NonNullable<ButtonProps['variant']>, string> = {
@@ -29,22 +36,26 @@ const SIZES: Record<NonNullable<ButtonProps['size']>, string> = {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'default', size = 'md', ...props }, ref) => (
-    <button
-      ref={ref}
-      className={cn(
-        'inline-flex shrink-0 select-none items-center justify-center font-medium',
-        'transition-[background-color,color,box-shadow,transform] duration-150',
-        'focus-visible:outline-none focus-visible:ring-4',
-        'active:translate-y-px',
-        'disabled:pointer-events-none disabled:opacity-45',
-        '[&>svg]:shrink-0',
-        VARIANTS[variant],
-        SIZES[size],
-        className,
-      )}
-      {...props}
-    />
-  ),
+  ({ className, variant = 'default', size = 'md', to, ...props }, ref) => {
+    const classes = cn(
+      'inline-flex shrink-0 select-none items-center justify-center font-medium',
+      'transition-[background-color,color,box-shadow,transform] duration-150',
+      'focus-visible:outline-none focus-visible:ring-4',
+      'active:translate-y-px',
+      'disabled:pointer-events-none disabled:opacity-45',
+      '[&>svg]:shrink-0',
+      VARIANTS[variant],
+      SIZES[size],
+      className,
+    )
+
+    if (to) {
+      return (
+        <Link to={to} className={classes} {...(props as AnchorHTMLAttributes<HTMLAnchorElement>)} />
+      )
+    }
+
+    return <button ref={ref} className={classes} {...props} />
+  },
 )
 Button.displayName = 'Button'

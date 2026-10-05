@@ -11,9 +11,12 @@ import io
 import logging
 import re
 
+from app.core.limits import MAX_CV_CHARS, MAX_CV_DOCX_BLOCKS, MAX_CV_PDF_PAGES
+
 logger = logging.getLogger(__name__)
 
-MAX_CHARS = 15_000
+MAX_CHARS = MAX_CV_CHARS
+MAX_PAGES = MAX_CV_PDF_PAGES
 TRUNCATED_MARKER = "\n[… text životopisu bol skrátený …]"
 SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 
@@ -54,13 +57,23 @@ def _from_pdf(data: bytes) -> str:
         logger.warning("CV PDF sa nepodarilo otvoriť", exc_info=True)
         return ""
 
+    # Čítame najviac MAX_PAGES strán a najviac MAX_CHARS znakov. 10 MB PDF môže
+    # mať tisíce strán; bez stropu by samotná extrakcia textu zožrala CPU ešte
+    # pred akýmkoľvek volaním modelu.
     pages: list[str] = []
+    total = 0
     for index, page in enumerate(reader.pages):
+        if index >= MAX_PAGES:
+            logger.info("CV PDF má viac ako %d strán, zvyšok sa ignoruje", MAX_PAGES)
+            break
         try:
-            pages.append(page.extract_text() or "")
+            text = page.extract_text() or ""
         except Exception:  # noqa: BLE001
             logger.warning("Strana %d CV PDF sa nedala prečítať", index + 1, exc_info=True)
-        if sum(len(p) for p in pages) > MAX_CHARS:
+            continue
+        pages.append(text)
+        total += len(text)
+        if total > MAX_CHARS:
             break
     return "\n\n".join(pages)
 
@@ -74,11 +87,28 @@ def _from_docx(data: bytes) -> str:
         logger.warning("CV DOCX sa nepodarilo otvoriť", exc_info=True)
         return ""
 
-    lines: list[str] = [p.text for p in document.paragraphs]
+    # Rovnaký dôvod ako pri PDF: počet odstavcov aj znakov je ohraničený, aby
+    # vygenerovaný DOCX s miliónom riadkov nezamestnal worker.
+    lines: list[str] = []
+    total = 0
+
+    def add(text: str) -> bool:
+        """Pridaj riadok. False = narazili sme na strop a máme skončiť."""
+        nonlocal total
+        lines.append(text)
+        total += len(text)
+        return len(lines) < MAX_CV_DOCX_BLOCKS and total <= MAX_CHARS
+
+    for paragraph in document.paragraphs:
+        if not add(paragraph.text):
+            return "\n".join(lines)
+
     for table in document.tables:
         for row in table.rows:
             cells = [cell.text.strip() for cell in row.cells]
-            lines.append(" | ".join(c for c in cells if c))
+            if not add(" | ".join(c for c in cells if c)):
+                return "\n".join(lines)
+
     return "\n".join(lines)
 
 

@@ -15,6 +15,7 @@ from app.core.ai.chat import (
     generate_response,
     should_offer_interest,
 )
+from app.core.limits import CHAT_MAX_OUTPUT_TOKENS
 
 POSITION = SimpleNamespace(
     title="Kuchár",
@@ -108,6 +109,26 @@ def test_overlong_user_message_is_cut():
     assert len(contents[-1]["parts"][0]["text"]) == chat_module.MAX_USER_MESSAGE_CHARS
 
 
+def test_request_sets_max_output_tokens(monkeypatch):
+    """Strop na výstup musí byť v requeste, inak sa dá cena odpovede nafúknuť."""
+    captured = {}
+
+    async def generate_content_stream(*, model, contents, config):
+        captured["config"] = config
+        return FakeStream(["Mzda je 1500 €."])
+
+    client = SimpleNamespace(
+        aio=SimpleNamespace(
+            models=SimpleNamespace(generate_content_stream=generate_content_stream)
+        )
+    )
+    monkeypatch.setattr(chat_module, "get_client", lambda: client)
+
+    run(collect(generate_response(POSITION, [], "Aká je mzda?", "Marek")))
+
+    assert captured["config"].max_output_tokens == CHAT_MAX_OUTPUT_TOKENS
+
+
 # --------------------------------------------------------------------------- #
 # Systémová inštrukcia
 # --------------------------------------------------------------------------- #
@@ -133,6 +154,15 @@ def test_company_instructions_are_included():
     position = SimpleNamespace(**{**POSITION.__dict__, "ai_bot_instructions": "Zdôrazni nočné zmeny."})
     text = build_system_instruction(position, None, "Marek")
     assert "Zdôrazni nočné zmeny." in text
+
+
+def test_internal_notes_never_reach_the_bot():
+    """Podľa čoho firma boduje, uchádzač vedieť nemá — chatbot to nedostane."""
+    position = SimpleNamespace(
+        **{**POSITION.__dict__, "ai_evaluation_notes": "Nechceme nikoho z Košíc."}
+    )
+    text = build_system_instruction(position, None, "Marek")
+    assert "Košíc" not in text
 
 
 def test_requirements_reach_the_bot():

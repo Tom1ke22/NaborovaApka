@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { type Position, CONTRACT_TYPE_LABELS, SALARY_PERIOD_LABELS } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -25,7 +25,6 @@ import {
   Sofa,
   Utensils,
   User,
-  Sparkles,
 } from 'lucide-react'
 
 export default function PositionDetail() {
@@ -59,6 +58,9 @@ export default function PositionDetail() {
         req.foreign_language_level && `Cudzí jazyk: ${req.foreign_language_level}`,
         req.hygiene_minimum_required && 'Hygienické minimum',
         req.health_certificate_required && 'Zdravotný preukaz',
+        ...(req.custom_requirements ?? [])
+          .filter((c) => c.required !== false)
+          .map((c) => c.label),
       ].filter((x): x is string => Boolean(x))
     : []
 
@@ -87,13 +89,13 @@ export default function PositionDetail() {
   return (
     <PublicShell slug={slug}>
       <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-        <button
-          onClick={() => navigate(`/${slug}`)}
+        <Link
+          to={`/${slug}`}
           className="group mb-6 inline-flex items-center gap-2 rounded-lg py-1 text-sm font-medium text-ink-soft transition-colors hover:text-brand-700"
         >
           <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
           Späť na zoznam pozícií
-        </button>
+        </Link>
 
         {/* Hlavička pozície */}
         <Card className="overflow-hidden animate-rise">
@@ -191,10 +193,6 @@ export default function PositionDetail() {
             <div className="space-y-4">
               <Card className="overflow-hidden border-brand-200 animate-rise">
                 <CardContent className="p-6">
-                  <span className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-accent-50 px-2.5 py-1 text-[11px] font-semibold text-accent-700 ring-1 ring-inset ring-accent-100">
-                    <Sparkles className="h-3 w-3" />
-                    Odpoveď hneď
-                  </span>
                   <h2 className="text-base font-semibold text-ink">Zaujala vás pozícia?</h2>
                   <p className="mt-1.5 text-sm leading-relaxed text-ink-soft">
                     Napíšte nášmu asistentovi. Odpovie na otázky k pozícii a potom môžete rovno
@@ -203,10 +201,10 @@ export default function PositionDetail() {
                   <Button
                     className="mt-5 w-full"
                     size="lg"
-                    onClick={() => navigate(`/${slug}/${positionId}/chat`)}
+                    to={`/${slug}/${positionId}/chat`}
                   >
                     <MessageSquare className="h-4 w-4" />
-                    Mám záujem / Chcem sa opýtať
+                    Mám záujem
                   </Button>
                 </CardContent>
               </Card>

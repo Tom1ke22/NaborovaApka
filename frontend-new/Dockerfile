@@ -10,4 +10,5 @@ RUN npm run build
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY security-headers.conf /etc/nginx/snippets/security-headers.conf
 EXPOSE 80

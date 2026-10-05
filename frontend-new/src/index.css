@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   Dizajnový systém NáborováApka
+   Dizajnový systém Náborová Aplikácia
    --------------------------------------------------------------------------
    Farby sú zámerne „teplo-pokojné": jedna výrazná značková (indigo), jedna
    doplnková (tyrkysová) a mäkké pastelové plochy. Semantické farby (zelená,
@@ -111,9 +111,29 @@
     text-rendering: optimizeLegibility;
   }
 
+  /* Tailwind v4 už tlačidlám nedáva ruku ako v3 — necháva systémový kurzor,
+     takže časť tlačidiel vyzerala neklikateľne. Vraciame to späť. Odkazy
+     (<a href>) a klikateľné <label> ruku majú už od prehliadača. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
   ::selection {
     background-color: var(--color-brand-200);
     color: var(--color-brand-900);
+  }
+
+  /* Prehliadač podfarbuje autofill polia žltou. Vlastnú farbu pozadia
+     nastaviť nevieme, ale nekonečne dlhý prechod ju nikdy nedokreslí. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  textarea:-webkit-autofill,
+  select:-webkit-autofill {
+    -webkit-text-fill-color: var(--color-ink);
+    transition: background-color 600000s 0s;
   }
 
   :focus-visible {
